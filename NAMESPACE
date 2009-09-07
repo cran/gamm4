@@ -1,0 +1,2 @@
+importFrom(Matrix,t,crossprod,solve,rowSums)
+export(gamm4)
