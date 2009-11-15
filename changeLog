@@ -1,0 +1,4 @@
+0.0-2
+
+* gamm4 now returns a `scale.estimated' field in its `gam' object
+  part. 

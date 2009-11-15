@@ -272,8 +272,12 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
     ## need to drop smooths from Zt and then
     ## form Z'phiZ + I \sigma^2
     vr <- lme4::VarCorr(ret$mer) ## list of ranef cov matrices in the same order as Gp
+
     scale <- as.numeric(attr(vr,"sc"))^2 ## get the scale parameter
-    if (!is.finite(scale)) scale <- 1
+    if (!is.finite(scale)) { 
+      scale <- 1
+      object$scale.estimated <- FALSE
+    } else object$scale.estimated <- TRUE
     
     sp <- rep(-1,n.sr)
 
