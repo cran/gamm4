@@ -113,7 +113,7 @@ gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm4.setup"
 } ## end of gamm4 setup
 
 
-gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
+gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,...)
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
@@ -132,7 +132,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
   mf<-match.call(expand.dots=FALSE)
  
   mf$formula<-gp$fake.formula
-  mf$family<-mf$scale<-mf$knots<-mf$weights<-mf$random <- mf$...<-NULL
+  mf$family<-mf$scale<-mf$knots<-mf$random <- mf$...<-NULL ## mf$weights?
   mf$drop.unused.levels<-TRUE
   mf[[1]]<-as.name("model.frame")
   pmf <- mf
@@ -205,8 +205,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
   
   lme4.formula <- as.formula(lme4.formula)
     
-  if (linear) b <- lmer(lme4.formula,data=mf,family=family,doFit=FALSE)
-  else  b <- glmer(lme4.formula,data=mf,family=family,doFit=FALSE)
+  if (linear) b <- lmer(lme4.formula,data=mf,family=family,weights=G$w,doFit=FALSE)
+  else  b <- glmer(lme4.formula,data=mf,family=family,weights=G$w,doFit=FALSE)
 
   if (n.sr) { ## use Fabian Scheipl's trick of overwriting dummy slots
      tn <- names(b$FL$fl) 
@@ -236,7 +236,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
   ## now fake a gam object 
     
   object<-list(model=mf,formula=formula,smooth=G$smooth,nsdf=G$nsdf,family=family,
-                 df.null=nrow(G$X),y=G$y,terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
+                 df.null=nrow(G$X),y=ret$mer@y,terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
                  contrasts=G$contrasts,assign=G$assign,na.action=attr(mf,"na.action"),
                  cmX=G$cmX,var.summary=G$var.summary)
   
@@ -304,8 +304,10 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
       } 
     }
 
-    weights <- NULL
-    if (is.null(weights)) object$prior.weights <- object$y*0+1 else object$prior.weights <- weights 
+   # weights <- NULL
+   # if (is.null(weights)) object$prior.weights <- object$y*0+1 else object$prior.weights <- weights 
+    
+    object$prior.weights <- ret$mer@pWt
 
     if (length(ret$mer@var)==0) { 
       V <- Diagonal(ncol(Zt))*scale
@@ -335,7 +337,11 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),
       first <- last + 1 
     }
    
-    Vb <- solve(XVX+S/scale) # covariance matrix - in constraint space
+    ## Vb <- solve(XVX+S/scale) # covariance matrix - in constraint space
+    ev <- eigen(XVX+S/scale,symmetric=TRUE)
+    ind <- ev$values != 0
+    iv <- ev$values;iv[ind] <- 1/ev$values[ind]
+    Vb <- ev$vectors%*%(iv*t(ev$vectors))
 
     object$edf<-rowSums(Vb*t(XVX))
    

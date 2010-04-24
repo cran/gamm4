@@ -3,8 +3,8 @@
 %- Also NEED an `\alias' for EACH other topic documented here.
 \title{Generalized Additive Mixed Models using lme4 and mgcv}
 \description{ Fits the specified  generalized additive mixed model (GAMM) to
-data, by a call to \code{\link[lme4]{lmer}} in the normal errors identity link case, or by 
-a call to \code{\link[lme4]{glmer}} otherwise. Smoothness selection is by REML in the gaussian 
+data, by a call to \code{lmer} in the normal errors identity link case, or by 
+a call to \code{glmer} otherwise  (see \code{\link[lme4]{lmer}}). Smoothness selection is by REML in the gaussian 
 additive case and ML otherwise. 
 
 \code{gamm4} is based on \code{\link[mgcv]{gamm}} from package \code{mgcv}, but uses \code{lme4} rather than 
@@ -24,7 +24,7 @@ To use this function effectively it helps to be quite familiar with the use of
 }
 
 \usage{
-gamm4(formula,random=NULL,family=gaussian(),data=list(),
+gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,...)
 }
 
@@ -44,6 +44,8 @@ covariates required by the formula.  By default the variables are taken
 from \code{environment(formula)}, typically the environment from 
 which \code{gamm4} is called.} 
 
+\item{weights}{a vector of prior weights on the observations. \code{NULL} is equivalent to a vector of 1s. Used, in particular, 
+to supply the number-of-trials for binomial data, when the response is proportion of successes. }
 
 \item{subset}{ an optional vector specifying a subset of observations to be
           used in the fitting process.}
@@ -84,7 +86,7 @@ As in \code{\link[mgcv]{gamm}} the smooth estimates are assumed to be of interes
 enables Bayesian credile intervals for the smooths to be constructed, which treat all the terms in \code{random} as random. 
 
 For details on how to condition smooths on factors, set up varying coefficient models, do signal regression or set up terms 
-involving linear functionals of smooths, see \code{\link[mgcv]{gam.models}}, but note that tensor product and adaptice smooths are 
+involving linear functionals of smooths, see \code{\link[mgcv]{gam.models}}, but note that tensor product and adaptive smooths are 
 not available with \code{gamm4}.
 
 Note that since the only multidimensional smooths available are isotropic, then you must think carefully about how to scale 
@@ -101,8 +103,8 @@ its widespread use implies.
 \item{gam}{an object of class \code{gam}. At present this contains enough information to use
 \code{predict}, \code{plot}, \code{summary} and \code{print} methods and \code{vis.gam}, from package \code{mgcv}
 but not to use e.g. the \code{anova} method function to compare models.}
-\item{mer}{the fitted model object returned by \code{\link[lme4]{lmer}} or \code{\link[lme4]{glmer}}. Extra random and fixed 
-effect terms will appear relating to the estiamtion of the smooth terms. Note that unlike \code{lme} objects returned
+\item{mer}{the fitted model object returned by \code{\link[lme4]{lmer}} or \code{glmer}. Extra random and fixed 
+effect terms will appear relating to the estimation of the smooth terms. Note that unlike \code{lme} objects returned
 by \code{\link[mgcv]{gamm}}, everything in this object always relates to the fitted model itself, and never to a PQL working 
 approximation: hence the usual methods of model comparison are entirely legitimate. }
 
@@ -153,6 +155,9 @@ This routine is obviously less well tested than \link[mgcv]{gamm}.
  }
 
 \examples{
+## NOTE: some `gamm' calls are flagged as do not run simply to
+## save time in package checking.
+
 #################################
 ## A simple additive model...
 #################################
@@ -161,14 +166,15 @@ library(gamm4)
 set.seed(0) 
 dat <- gamSim(1,n=400,scale=2) ## simulate data
 
+\dontrun{
 b <- gamm(y~s(x0)+s(x1)+s(x2)+s(x3),data=dat)
+plot(b$gam,pages=1)
+summary(b$gam)  ## gam style summary of fitted model
+}
 
 br <- gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),data=dat)
-
-plot(b$gam,pages=1)
 plot(br$gam,pages=1)
 
-summary(b$gam)  ## gam style summary of fitted model
 summary(br$gam) ## same from `gamm4'
 summary(br$mer) ## underlying mixed model
 anova(br$gam) 
@@ -181,13 +187,15 @@ rm(dat)
 
 dat <- gamSim(6,n=400,scale=.2,dist="poisson")
 
+\dontrun{
 b2<-gamm(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
          data=dat,random=list(fac=~1))
-
+plot(b2$gam,pages=1)
+}
 b2r<-gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
          data=dat,random = ~ (1|fac))
 
-plot(b2$gam,pages=1)
+
 plot(b2r$gam,pages=1)
 
 rm(dat)
@@ -238,11 +246,16 @@ y <- mu + rnorm(n)*2 ## response data
 ## First compare gamm and gamm4 on a reduced model
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = ~ (1|a/b))
+
+\dontrun{
 ba <- gamm(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = list(a=~1,b=~1),method="REML")
+}
 
 par(mfrow=c(2,2))
-plot(br$gam);plot(ba$gam)
-
+plot(br$gam)
+\dontrun{
+plot(ba$gam)
+}
 ## now fit the full model
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = ~ (x+0|g) + (1|g) + (1|a/b))
@@ -259,11 +272,17 @@ y <- rpois(exp(lp),exp(lp)) ## simulated response
 ## again compare gamm and gamm4 on reduced model
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = ~ (1|a/b))
+
+\dontrun{
 ba <- gamm(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = list(a=~1,b=~1))
+}
 
 par(mfrow=c(2,2))
-plot(br$gam);plot(ba$gam)
+plot(br$gam);
 
+\dontrun{
+plot(ba$gam)
+}
 ## and now fit full version...
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = ~ (x|g) + (1|a/b))
@@ -280,7 +299,7 @@ dat <- gamSim(4)
 
 br <- gamm4(y ~ fac+s(x2,by=fac)+s(x0),data=dat)
 plot(br$gam,pages=1)
-summary(b)
+summary(br$gam)
 
 
 ####################################
@@ -319,19 +338,20 @@ dat <- gamSim(1,n=400,scale=2) ## simulate 4 term additive truth
 ## grouped into one of 20 groups by `fac' and each groups has a
 ## random effect added....
 fac <- as.factor(sample(1:20,400,replace=TRUE))
-dat$X <- model.matrix(~fac-1)
+X <- model.matrix(~fac-1)
 b <- rnorm(20)*.5
-dat$y <- dat$y + dat$X\%*\%b
+dat$y <- dat$y + X\%*\%b
+dat$fac <- fac
 
 ## now fit appropriate random effect model using `gam'...
-PP <- list(X=list(rank=20,diag(20)))
-rm <- gam(y~ X+s(x0)+s(x1)+s(x2)+s(x3),data=dat,
-          paraPen=PP,method="REML")
+
+rm <- gam(y~ s(fac,bs="re")+s(x0)+s(x1)+s(x2)+s(x3),data=dat,
+          method="REML")
 plot(rm,pages=1)
 ## Get estimated random effects standard deviation...
-sig.b <- sqrt(rm$sig2/rm$sp[1]);sig.b^2 
+gam.vcomp(rm)
 
-## Now do same thing with gamm4, rather more simply
+## Now do same thing with gamm4
 rmr <- gamm4(y~ s(x0)+s(x1)+s(x2)+s(x3),data=dat,
             random = ~ (1|fac))
 plot(rmr$gam,pages=1)

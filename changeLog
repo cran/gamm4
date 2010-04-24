@@ -1,3 +1,16 @@
+0.0-3
+
+* solving for the coefficient covariance matrix could fail under heavy 
+  smoothing --- now made more robust. 
+
+* `gamm4' can now be supplied with prior weights. 
+
+* The `cbind(success,failure)' form for a binomial response now works 
+  properly.
+
+* help file has been updated for mgcv_1.6-2, and to avoid running to 
+  many slow `gamm' calls in checking.
+
 0.0-2
 
 * gamm4 now returns a `scale.estimated' field in its `gam' object
