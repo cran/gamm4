@@ -283,13 +283,13 @@ plot(br$gam);
 \dontrun{
 plot(ba$gam)
 }
-## and now fit full version...
-
+## and now fit full version (very slow)...
+\dontrun{
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = ~ (x|g) + (1|a/b))
 br$mer
 br$gam
 plot(br$gam)
-
+}
 
 ####################################
 # Different smooths of x2 depending 

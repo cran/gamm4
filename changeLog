@@ -1,3 +1,8 @@
+0.0-4
+
+* covariance matrix calculation waws still not robust enough. Improved 
+further.
+
 0.0-3
 
 * solving for the coefficient covariance matrix could fail under heavy 

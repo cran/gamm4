@@ -86,7 +86,6 @@ gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm4.setup"
       sm$last.f.para <- first.f.para-1
     }
     ## now add appropriate column names to Xf.
-    ## without these, summary.lme will fail
     
     if (ncol(Xf)) {
       Xfnames<-rep("",ncol(Xf)) 
@@ -241,9 +240,15 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
                  cmX=G$cmX,var.summary=G$var.summary)
   
   ## to unpack coefficients look at names(ret$lme$flist), ret$lme@Zt, ranef(), fixef()
-
-
-  # Transform  parameters back to the original space....
+ 
+    ## let the GAM coefficients in the original parameterization be beta,
+    ## and let them be beta' in the fitting parameterization. 
+    ## Then beta = B beta'. B and B^{-1} can be efficiently accumulated
+    ## and are useful for stable computation of the covariance matrix
+    ## etc... 
+    B <- diag(ncol(G$Xf))
+    Xfp <- G$Xf
+    ## Transform  parameters back to the original space....
     bf <- as.numeric(lme4::fixef(ret$mer)) ## the fixed effects
     br <- lme4::ranef(ret$mer) ## a named list
     if (G$nsdf) p<-bf[1:G$nsdf] else p<-array(0,0)
@@ -261,9 +266,20 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
       }
       ## if (is.null(G$smooth[[i]]$C)) nc <- 0 else nc <- nrow(G$smooth[[i]]$C) 
       ## if (nc) b <- qr.qy(G$smooth[[i]]$qrc,c(rep(0,nc),b))
-      object$smooth[[i]]$first.para<-length(p)+1
+      first <- object$smooth[[i]]$first.para<-length(p)+1
       p<-c(p,b)
-      object$smooth[[i]]$last.para<-length(p)
+      last <- object$smooth[[i]]$last.para<-length(p)
+      ## last few parameters unpenalized in fitting parameterization,
+      ## this records how many...
+      nun <- object$smooth[[i]]$n.unpenalized <- length(beta)
+      ## now fill in B and Bi...
+      D <- c(G$smooth[[i]]$D,rep(1,nun))
+      ind <- first:last
+      B[ind,ind] <- t(D*t(G$smooth[[i]]$U))
+      ##  Bi[ind,ind] <- t(G$smooth[[i]]$U)/D
+      ## and finally transform G$Xf into fitting parameterization...
+      Xfp[,ind] <- G$Xf[,ind]%*%B[ind,ind]
+
     }
  
     object$coefficients<-p
@@ -317,31 +333,53 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
        object$weights <- 1/ret$mer@var
     }
     if (nrow(Zt)>0) V <- V + crossprod(Zt,phi%*%Zt) ## data or pseudodata cov matrix, treating smooths as fixed now
+    
+    ## as(,"Matrix") is needed here as a matrix decompostion is returned by
+    ## Cholesky. Amusingly, if you solve with this decomposition, you get
+    ## the inverse of the full matrix, not its choleski decomposition..
+    R <- as(Cholesky(V),"Matrix")  
+
     G$Xf <- as(G$Xf,"dgCMatrix")
-    XVX <- t(G$Xf)%*%solve(V,G$Xf) ## X'V^{-1}X
+    Xfp <- as(Xfp,"dgCMatrix")
+    WX <- as(solve(R,Xfp),"matrix")    ## V^{-.5}Xp -- fit parameterization
+
+    XVX <- t(G$Xf)%*%solve(V,G$Xf) ## X'V^{-1}X original parameterization
     
     object$sp <- sp
 
-    S<-matrix(0,ncol(G$Xf),ncol(G$Xf)) # penalty matrix
+    ## S<-matrix(0,ncol(G$Xf),ncol(G$Xf)) # penalty matrix - original param
+    Sp<-matrix(0,ncol(G$Xf),ncol(G$Xf)) # penalty matrix - fit param
     first <- G$nsdf+1
     k <- 1
     if (G$m>0) for (i in 1:G$m) # Accumulate the total penalty matrix
     { n.para <- object$smooth[[i]]$last.para - object$smooth[[i]]$first.para + 1
       last <- first + n.para - 1 
       if (!object$smooth[[i]]$fixed)
-      { S[first:last,first:last] <- S[first:last,first:last] + 
-                  object$smooth[[i]]$ZSZ*object$sp[k]
-          k <- k+1
-														      
-      }
+      { ## S[first:last,first:last] <- S[first:last,first:last] + 
+        ##          object$smooth[[i]]$ZSZ*object$sp[k]
+        nun <- object$smooth[[i]]$n.unpenalized
+        diag(Sp)[first:(last-nun)] <- sqrt(object$sp[k])
+        k <- k+1														           }
+     
       first <- last + 1 
     }
    
+    ## Alternative cov matrix calculation. Basic
+    ## idea is that cov matrix is computed stabley in
+    ## fitting parameterization, and then transformed to
+    ## original parameterization. 
+    qrx <- qr(rbind(WX,Sp/sqrt(scale)),pivot=TRUE)
+    Ri <- backsolve(qr.R(qrx),diag(ncol(WX)))
+    ind <- qrx$pivot;ind[ind] <- qrx$pivot
+    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization
+    Vb <- B%*%Ri; Vb <- Vb%*%t(Vb)
+
+
     ## Vb <- solve(XVX+S/scale) # covariance matrix - in constraint space
-    ev <- eigen(XVX+S/scale,symmetric=TRUE)
-    ind <- ev$values != 0
-    iv <- ev$values;iv[ind] <- 1/ev$values[ind]
-    Vb <- ev$vectors%*%(iv*t(ev$vectors))
+    #ev <- eigen(XVX+S/scale,symmetric=TRUE)
+    #ind <- ev$values != 0
+    #iv <- ev$values;iv[ind] <- 1/ev$values[ind]
+    #Vb1 <- ev$vectors%*%(iv*t(ev$vectors))
 
     object$edf<-rowSums(Vb*t(XVX))
    
@@ -349,7 +387,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     if (linear) { object$method <- "lmer.REML"
     } else { object$method <- "glmer.ML"}
 
-    Vb <- Vb
+    ##Vb <- Vb
+
     object$Vp <- as(Vb,"matrix")
   
     object$Ve <- as(Vb%*%XVX%*%Vb,"matrix")
