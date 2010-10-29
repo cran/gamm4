@@ -10,9 +10,10 @@ additive case and ML otherwise.
 \code{gamm4} is based on \code{\link[mgcv]{gamm}} from package \code{mgcv}, but uses \code{lme4} rather than 
 \code{nlme} as the underlying fitting engine via a trick due to Fabian Scheipl. 
 \code{gamm4} is more robust numerically than \code{\link[mgcv]{gamm}}, and by avoiding PQL gives better 
-performance for binary and low mean count data. Its main disadvantage is that it can only handle single 
-penalty smooths (i.e. not tensor product or adaptive) and there is 
-no facilty for \code{nlme} style correlation structures. 
+performance for binary and low mean count data. Its main disadvantage is that it can not handle most multi-penalty 
+smooths (i.e. not \code{\link[mgcv]{te}} type tensor products or adaptive smooths) and there is 
+no facilty for \code{nlme} style correlation structures. Tensor product smoothing is available via 
+\code{\link[mgcv]{t2}} terms.
  
 For fitting generalized additive models without random effects, \code{gamm4} is much slower 
 than \code{\link[mgcv]{gam}} and has slightly worse MSE performance than \code{\link[mgcv]{gam}} 
@@ -30,8 +31,8 @@ gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
 
 \arguments{ 
 \item{formula}{ A GAM formula (see also \code{\link[mgcv]{formula.gam}} and \code{\link[mgcv]{gam.models}}).
-This is like the formula for a \code{\link{glm}} except that smooth terms (\code{\link[mgcv]{s}} but not \code{\link[mgcv]{te}})
-can be added to the right hand side of the formula. Note that \code{id}s for smooths and fixed smoothing 
+This is like the formula for a \code{\link{glm}} except that smooth terms (\code{\link[mgcv]{s}} and \code{\link[mgcv]{t2}} 
+but not \code{\link[mgcv]{te}}) can be added to the right hand side of the formula. Note that \code{id}s for smooths and fixed smoothing 
 parameters are not supported.} 
 
 \item{random}{An optional formula specifying the random effects structure in \code{\link[lme4]{lmer}} style.
@@ -79,7 +80,8 @@ penalty smoother to be used (see Wood, 2004, or 2006 for details). Given the rep
 trick for getting \code{\link[lme4]{lmer}} to fit a GAMM can be employed (see package \code{amer}). Estimation is by 
 Maximum Likelihood in the generalized case, and REML in the gaussian additive model case. \code{gamm4} allows 
 the random effects specifiable with \code{\link[lme4]{lmer}} to be combined with any number of any of the (single penalty) smooth
-terms available in \code{\link[mgcv]{gam}} from package \code{mgcv}. Note that the model comparison on the basis of the (Laplace 
+terms available in \code{\link[mgcv]{gam}} from package \code{mgcv} as well as \code{\link[mgcv]{t2}} tensor product smooths. 
+Note that the model comparison on the basis of the (Laplace 
 approximate) log likelihood is possible with GAMMs fitted by \code{gamm4}. 
 
 As in \code{\link[mgcv]{gamm}} the smooth estimates are assumed to be of interest, and a covariance matrix is returned which 
@@ -88,13 +90,6 @@ enables Bayesian credile intervals for the smooths to be constructed, which trea
 For details on how to condition smooths on factors, set up varying coefficient models, do signal regression or set up terms 
 involving linear functionals of smooths, see \code{\link[mgcv]{gam.models}}, but note that tensor product and adaptive smooths are 
 not available with \code{gamm4}.
-
-Note that since the only multidimensional smooths available are isotropic, then you must think carefully about how to scale 
-variables that appear as arguments of such a smooth, if they are not naturally on the same scale. Fot example if you use a term 
-\code{s(x,v)} then it is important to ensure that \code{x} and \code{v} are scaled so that it is reasonable to assume that 
-\code{s} will have about the same amount of wiggliness per unit change in \code{x} as it has per unit change in \code{v}. Sometimes 
-it can be ok to rescale \code{x} and \code{v} to lie in the unit square: but the justification for doing this is much weaker than 
-its widespread use implies. 
 
 }
 
@@ -143,7 +138,7 @@ Note that the \code{gam} object part of the returned object is not complete in
 the sense of having all the elements defined in \link[mgcv]{gamObject} and
 does not inherit from \code{glm}: hence e.g. multi-model \code{anova} calls will not work.
 
-Linked smoothing parameters, adaptive smoothing and tensor product smoothing are not supported.
+Linked smoothing parameters, adaptive smoothing and te terms are not supported.
 
 This routine is obviously less well tested than \link[mgcv]{gamm}.
 

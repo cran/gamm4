@@ -1,6 +1,14 @@
+0.1-0
+
+* Upgraded to use `t2' type tensor product smooths
+
+* bug fix so that s(...,fx=TRUE) works
+
+* workaround in gamm4 so that g/lmer handles offset properly.
+
 0.0-4
 
-* covariance matrix calculation waws still not robust enough. Improved 
+* covariance matrix calculation was still not robust enough. Improved 
 further.
 
 0.0-3
