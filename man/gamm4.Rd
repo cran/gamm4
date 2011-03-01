@@ -85,10 +85,10 @@ Note that the model comparison on the basis of the (Laplace
 approximate) log likelihood is possible with GAMMs fitted by \code{gamm4}. 
 
 As in \code{\link[mgcv]{gamm}} the smooth estimates are assumed to be of interest, and a covariance matrix is returned which 
-enables Bayesian credile intervals for the smooths to be constructed, which treat all the terms in \code{random} as random. 
+enables Bayesian credible intervals for the smooths to be constructed, which treat all the terms in \code{random} as random. 
 
 For details on how to condition smooths on factors, set up varying coefficient models, do signal regression or set up terms 
-involving linear functionals of smooths, see \code{\link[mgcv]{gam.models}}, but note that tensor product and adaptive smooths are 
+involving linear functionals of smooths, see \code{\link[mgcv]{gam.models}}, but note that \code{te} type tensor product and adaptive smooths are 
 not available with \code{gamm4}.
 
 }

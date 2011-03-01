@@ -327,38 +327,55 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     
     ## need to drop smooths from Zt and then
     ## form Z'phiZ + I \sigma^2
-    vr <- lme4::VarCorr(ret$mer) ## list of ranef cov matrices in the same order as Gp
 
+
+    vr <- lme4::VarCorr(ret$mer) ## list of ranef variance components in the same order as Gp
+    
     scale <- as.numeric(attr(vr,"sc"))^2 ## get the scale parameter
     if (!is.finite(scale)) { 
       scale <- 1
       object$scale.estimated <- FALSE
     } else object$scale.estimated <- TRUE
     
+    ## The relative variance matrices for each random effect are stored in factorized form TSST' 
+    ## where T is lower tri and S diagonal. `expand' will extract the same factorization 
+    ## for the whole of phi, using sparse matrices. expand returns a permutation matrix P
+    ## but at time of writing the ordering of T and S and Z are consistent without 
+    ## permutation, and inconsistent with it, so it appears to be irrelevant here. 
+
+    phi <- expand(ret$mer,sparse = TRUE) ## factorization of phi as TSST'
+        
     sp <- rep(-1,n.sr)
 
     Zt <- Matrix(0,0,ncol(ret$mer@Zt))
     if (n.sr==0) sn <- NULL ## names by which smooths are known in mer
     rn <- names(vr)
+    ind <- rep(0,0) ## index the non-smooth random effects among the random effects
     for (i in 1:length(vr)) {
       if (is.null(sn)||!rn[i]%in%sn) { ## append non smooth r.e.s to Zt
-        ind <- (ret$mer@Gp[i]+1):ret$mer@Gp[i+1]
-        Zt <- rBind(Zt,ret$mer@Zt[ind,])
+        ind <- c(ind,(ret$mer@Gp[i]+1):ret$mer@Gp[i+1])
+        ##  ind <- ret$mer@Gp[i]+1):ret$mer@Gp[i+1]
+        ## Zt <- rBind(Zt,ret$mer@Zt[ind,])
       } else if (!is.null(sn)) { ## extract smoothing parameters for smooth r.e.s
         k <- (1:n.sr)[rn[i]==sn] ## where in original smooth ordering is current smooth
         if (as.numeric(vr[[i]]>0)) sp[k] <- scale/as.numeric(vr[[i]]) else 
         sp[k] <- 1e10
       }
     }
-    phi <- Matrix(0,nrow(Zt),nrow(Zt))
-    for (i in 1:length(vr)) {
-      k <- 0
-      if (is.null(sn)||!rn[i]%in%sn) {
-        nc <- ncol(vr[[i]])
-        ind <- 1:nc + k;k <- k + nc
-        phi[ind,ind] <- vr[[i]]
-      } 
+
+    if (length(ind)) { ## extract columns corresponding to non-smooth r.e.s 
+      Zt <- ret$mer@Zt[ind,] ## extracting random effects model matrix
+      root.phi <- phi$S[ind,ind]%*%t(phi$T[ind,ind]) ## and corresponding sqrt of cov matrix (phi)
     }
+ #   phi <- Matrix(0,nrow(Zt),nrow(Zt))
+ #   for (i in 1:length(vr)) {
+ #     k <- 0
+ #     if (is.null(sn)||!rn[i]%in%sn) {
+ #       nc <- ncol(vr[[i]])
+ #       ind <- 1:nc + k;k <- k + nc
+ #       phi[ind,ind] <- vr[[i]]
+ #     } 
+ #   }
 
    # weights <- NULL
    # if (is.null(weights)) object$prior.weights <- object$y*0+1 else object$prior.weights <- weights 
@@ -372,8 +389,10 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     { V <- Diagonal(x=1/ret$mer@var)*scale ## the response variance conditional on the r.e.s
        object$weights <- 1/ret$mer@var
     }
-    if (nrow(Zt)>0) V <- V + crossprod(Zt,phi%*%Zt) ## data or pseudodata cov matrix, treating smooths as fixed now
-    
+  
+#   if (nrow(Zt)>0) V <- V + crossprod(Zt,phi%*%Zt) ## data or pseudodata cov matrix, treating smooths as fixed now
+    if (nrow(Zt)>0) V <- V + crossprod(root.phi%*%Zt)*scale ## data or pseudodata cov matrix, treating smooths as fixed now
+
     ## as(,"Matrix") is needed here as a matrix decompostion is returned by
     ## Cholesky. Amusingly, if you solve with this decomposition, you get
     ## the inverse of the full matrix, not its choleski decomposition..
@@ -471,6 +490,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     names(object$sp) <- names(G$sp)
 
     object$gcv.ubre <- deviance(ret$mer)
+
+    if (!is.null(G$Xcentre)) object$Xcentre <- G$Xcentre ## any column centering applied to smooths
 
     ret$gam<-object
     ret

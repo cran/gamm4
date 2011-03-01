@@ -1,3 +1,15 @@
+0.1-2
+
+* Bad bug fix: I'd failed to track an internal lme4 change, so that 
+  gamm4 had stopped extracting random effect variances correctly. 
+  This meant that gamm4 standard errors were typically too low. 
+  Fixed and checks added to test suite to detect this sort of problem.  
+
+0.1-1
+
+* Allow for centering of smooth model matrix columns, when there is an 
+  intercept, but columns are not centered by constraint.
+
 0.1-0
 
 * Upgraded to use `t2' type tensor product smooths
