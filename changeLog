@@ -1,3 +1,23 @@
+ISSUES:
+
+* gamm4 isn't handling NA's properly with formulae like y~factor(z).
+  When inserting z into dataframe, it fails to drop.
+
+* gamm4 (and indeed gamm) will fail if the fixed effects are not identifiable. 
+  This can happen, quite easily. e.g.  s(x,by=fac1) + s(x,by=fac2) means that
+  the columns x:fac1 and x:fac2 are not independent.
+
+* The computation of the covariance matrix of the response/pseudodata 
+  is very resource intensive if the random effects are in only a few groups. 
+  When there are only few random effects an alternative computation would 
+  be much better.
+
+0.1-3
+
+* Incorrect pivoting of covariance matrix of data/pseudodata could lead 
+  to incorrect covariance matrix for coefficients and incorrect EDF 
+  computation. Pivoting now corrected, and results tested. 
+
 0.1-2
 
 * Bad bug fix: I'd failed to track an internal lme4 change, so that 
