@@ -443,6 +443,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     if (!is.null(G$Xcentre)) object$Xcentre <- G$Xcentre ## any column centering applied to smooths
 
     ret$gam<-object
+    class(gamm4) <- c("gamm4","list")
     ret
 
 } ## end of gamm4
