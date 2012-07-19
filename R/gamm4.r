@@ -1,4 +1,4 @@
-## Version of gamm using lme4 as fit engine. (c) Simon N. Wood 2009/10
+## Version of gamm using lme4 as fit engine. (c) Simon N. Wood 2009/12
 ## Reparameterization trick as Wood (2004,2006). 
 ## fooling lmer using Fabian Scheipl's trick.
 
@@ -250,7 +250,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   ## now fake a gam object 
     
   object<-list(model=mf,formula=formula,smooth=G$smooth,nsdf=G$nsdf,family=family,
-                 df.null=nrow(G$X),y=ret$mer@y,terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
+                 df.null=nrow(G$X),y=ret$mer@y, ## getME problem - don't know how else to extract
+                 terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
                  contrasts=G$contrasts,assign=G$assign,na.action=attr(mf,"na.action"),
                  cmX=G$cmX,var.summary=G$var.summary)
   
@@ -320,13 +321,16 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
         
     sp <- rep(-1,n.sr)
 
-    Zt <- Matrix(0,0,ncol(ret$mer@Zt))
+    ## Zt <- Matrix(0,0,ncol(ret$mer@Zt))
+    Zt <- Matrix(0,0,ncol(getME(ret$mer,"Zt")))
     if (n.sr==0) sn <- NULL ## names by which smooths are known in mer
     rn <- names(vr)
     ind <- rep(0,0) ## index the non-smooth random effects among the random effects
     for (i in 1:length(vr)) {
       if (is.null(sn)||!rn[i]%in%sn) { ## append non smooth r.e.s to Zt
-        ind <- c(ind,(ret$mer@Gp[i]+1):ret$mer@Gp[i+1])
+        ## Gp <- ret$mer@Gp
+        Gp <- getME(ret$mer,"Gp")
+        ind <- c(ind,(Gp[i]+1):Gp[i+1])
       } else if (!is.null(sn)) { ## extract smoothing parameters for smooth r.e.s
         k <- (1:n.sr)[rn[i]==sn] ## where in original smooth ordering is current smoothing param
         if (as.numeric(vr[[i]]>0)) sp[k] <- scale/as.numeric(vr[[i]]) else 
@@ -335,13 +339,14 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     }
 
     if (length(ind)) { ## extract columns corresponding to non-smooth r.e.s 
-      Zt <- ret$mer@Zt[ind,] ## extracting random effects model matrix
+      ## Zt <- ret$mer@Zt[ind,] ## extracting random effects model matrix
+      Zt <- getME(ret$mer,"Zt")[ind,]
       root.phi <- phi$S[ind,ind]%*%t(phi$T[ind,ind]) ## and corresponding sqrt of cov matrix (phi)
     }
 
-    object$prior.weights <- ret$mer@pWt
+    object$prior.weights <- ret$mer@pWt ## getME problem --- not accessible
 
-    if (length(ret$mer@var)==0) { 
+    if (length(ret$mer@var)==0) { ## getME problem -- can't find extractor
       V <- Diagonal(ncol(Zt))*scale
       object$weights <- object$prior.weights
     } else 
@@ -363,8 +368,11 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
       WX <- as(solve(t(R),Xfp[piv,]),"matrix")    ## V^{-.5}Xp -- fit parameterization
       XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")  ## same in original parameterization
     }
+    qrz <- qr(XVX,LAPACK=TRUE)
+    object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
 
-    XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
+    XVX <- crossprod(object$R) ## X'V^{-1}X original parameterization
+   ## XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
     object$sp <- sp
     
     colx <- ncol(G$Xf)
@@ -386,14 +394,16 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     ## idea is that cov matrix is computed stably in
     ## fitting parameterization, and then transformed to
     ## original parameterization. 
-    qrx <- qr(rbind(WX,Sp/sqrt(scale)),pivot=TRUE)
+    qrx <- qr(rbind(WX,Sp/sqrt(scale)),LAPACK=TRUE)
     Ri <- backsolve(qr.R(qrx),diag(ncol(WX)))
-    ind <- qrx$pivot;ind[ind] <- qrx$pivot
-    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization
+    ind <- qrx$pivot;ind[ind] <- 1:length(ind)## qrx$pivot
+    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization Ri Ri' = cov
     Vb <- B%*%Ri; Vb <- Vb%*%t(Vb)
 
     object$edf<-rowSums(Vb*t(XVX))
    
+    object$df.residual <- length(object$y) - sum(object$edf)
+
     object$sig2 <- scale
     if (linear) { object$method <- "lmer.REML"
     } else { object$method <- "glmer.ML"}
@@ -843,7 +853,14 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
       XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")
     }
 
-    XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
+    qrz <- qr(XVX,LAPACK=TRUE)
+    object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
+
+    XVX <- crossprod(object$R) ## X'V^{-1}X original parameterization
+
+    object$R <- object$R * sqrt(scale)
+    
+    ## XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
     object$sp <- sp
 
     Sp<-matrix(0,ncol(G$Xf),ncol(G$Xf)) # penalty matrix - fit param
@@ -872,6 +889,8 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
 
     object$edf<-rowSums(Vb*t(XVX))
    
+    object$df.residual <- length(object$y) - sum(object$df.residual)
+
     object$sig2 <- scale
     if (linear) { object$method <- "lmer.REML"
     } else { object$method <- "glmer.ML"}

@@ -12,6 +12,15 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.1-6
+
+* added return of R factor from QR of WX.
+
+* cov matrix computation modified to use LAPACK and pivoting properly.
+
+* some changes to replace direct slot acces with getME, but incomplete (y, pWt
+  and var still direct).
+
 0.1-5
 
 * gamm4 return object now of class "gamm4"
