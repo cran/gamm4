@@ -11,6 +11,16 @@ ISSUES:
   is very resource intensive if the random effects are in only a few groups. 
   When there are only few random effects an alternative computation would 
   be much better.
+	
+0.2-0
+
+* Updated for new lme4. gamm4 tests for lme4 version installed, and behaves 
+  accordingly. Will generate notes on testing with old lme4 - unavoidable. Some 
+  testing still to do - awaiting some lme4 fixes. 
+
+* fix to variance computation - prior weights were not used correctly - could
+  cause incorrect interval estimation for smooths when prior weights used
+  (e.g. binomial with n > 1, or weighted gaussian case).
 
 0.1-6
 
@@ -18,7 +28,7 @@ ISSUES:
 
 * cov matrix computation modified to use LAPACK and pivoting properly.
 
-* some changes to replace direct slot acces with getME, but incomplete (y, pWt
+* some changes to replace direct slot access with getME, but incomplete (y, pWt
   and var still direct).
 
 0.1-5

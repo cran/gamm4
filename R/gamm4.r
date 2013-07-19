@@ -1,6 +1,6 @@
-## Version of gamm using lme4 as fit engine. (c) Simon N. Wood 2009/12
+## Version of gamm using lme4 as fit engine. (c) Simon N. Wood 2009-13
 ## Reparameterization trick as Wood (2004,2006). 
-## fooling lmer using Fabian Scheipl's trick.
+## fooling lmer using Fabian Scheipl's trick (now adapted for new lme4).
 
 gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm.setup"),knots=NULL)
 ## set up the model matrix, penalty matrices and auxilliary information about the smoothing bases
@@ -113,12 +113,12 @@ gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm.setup")
   G
 } ## end of gamm4.setup
 
-gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
+gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,...)
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
-
+## THIS VERSION works with old lme4 (i.e. lme4.0 after new lme4 goes to CRAN)
 { 
   if (!require("lme4")) stop("gamm4() requires package lme4 to be installed")
   if (!require("mgcv")) stop("gamm4() requires package mgcv to be installed")
@@ -291,7 +291,6 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
          D <- G$smooth[[i]]$trans.D
          if (is.null(G$smooth[[i]]$trans.U)) B[ind,ind] <- Diagonal(length(D),D) else
          B[ind,ind] <- t(D*t(G$smooth[[i]]$trans.U))
-       ##  Bi[ind,ind] <- t(G$smooth[[i]]$trans.U)/D
       }
       ## and finally transform G$Xf into fitting parameterization...
       Xfp[,ind] <- G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE]
@@ -321,14 +320,12 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
         
     sp <- rep(-1,n.sr)
 
-    ## Zt <- Matrix(0,0,ncol(ret$mer@Zt))
     Zt <- Matrix(0,0,ncol(getME(ret$mer,"Zt")))
     if (n.sr==0) sn <- NULL ## names by which smooths are known in mer
     rn <- names(vr)
     ind <- rep(0,0) ## index the non-smooth random effects among the random effects
     for (i in 1:length(vr)) {
       if (is.null(sn)||!rn[i]%in%sn) { ## append non smooth r.e.s to Zt
-        ## Gp <- ret$mer@Gp
         Gp <- getME(ret$mer,"Gp")
         ind <- c(ind,(Gp[i]+1):Gp[i+1])
       } else if (!is.null(sn)) { ## extract smoothing parameters for smooth r.e.s
@@ -339,22 +336,27 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     }
 
     if (length(ind)) { ## extract columns corresponding to non-smooth r.e.s 
-      ## Zt <- ret$mer@Zt[ind,] ## extracting random effects model matrix
+      ## extracting random effects model matrix
       Zt <- getME(ret$mer,"Zt")[ind,]
       root.phi <- phi$S[ind,ind]%*%t(phi$T[ind,ind]) ## and corresponding sqrt of cov matrix (phi)
     }
 
     object$prior.weights <- ret$mer@pWt ## getME problem --- not accessible
 
-    if (length(ret$mer@var)==0) { ## getME problem -- can't find extractor
-      V <- Diagonal(ncol(Zt))*scale
+    if (length(ret$mer@var)==0) { 
       object$weights <- object$prior.weights
+      V <- Diagonal(n=length(object$weights),x=scale/object$weights) 
     } else 
-    { V <- Diagonal(x=1/ret$mer@var)*scale ## the response variance conditional on the r.e.s
-       object$weights <- 1/ret$mer@var
+    {  ## ret$mer@sqrtrWt is root reciprocal weights...
+       V <- Diagonal(x=ret$mer@sqrtrWt^2)*scale ## the response variance conditional on the r.e.s
+       object$weights <- 1/ret$mer@sqrtrWt^2
+       #object$weights <- 1/ret$mer@var 
     }
   
     if (nrow(Zt)>0) V <- V + crossprod(root.phi%*%Zt)*scale ## data or pseudodata cov matrix, treating smooths as fixed now
+
+    ## NOTE: Cholesky probably better in the following - then pivoting 
+    ##       automatic when solving....
 
     R <- Matrix:::chol(V,pivot=TRUE);piv <- attr(R,"pivot") 
 
@@ -372,7 +374,6 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
 
     XVX <- crossprod(object$R) ## X'V^{-1}X original parameterization
-   ## XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
     object$sp <- sp
     
     colx <- ncol(G$Xf)
@@ -456,151 +457,21 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     class(gamm4) <- c("gamm4","list")
     ret
 
-} ## end of gamm4
+} ## end of gamm40
 
-
-
-
-
-
-gamm4.setup0<-function(formula,pterms,data=stop("No data supplied to gamm4.setup"),knots=NULL)
-# set up the model matrix, penalty matrices and auxilliary information about the smoothing bases
-# needed for a gamm fit.
-# There is an implicit assumption that any rank deficient penalty does not penalize 
-# the constant term in a basis. 
-{ 
-  ## first simply call `gam.setup'....
-
-  G <- mgcv:::gam.setup(formula,pterms,data=data,knots=knots,sp=NULL,
-                    min.sp=NULL,H=NULL,absorb.cons=TRUE)
- 
-  if (!is.null(G$L)) stop("gamm4 can not handle linked smoothing parameters (probably from use of `id')")
-  # now perform re-parameterization...
-
-  first.f.para<-G$nsdf+1
-  first.r.para<-1
- 
-  G$Xf <- G$X # full GAM model matrix, treating smooths as fixed effects
-  random<-list()
-  random.i<-0
-
-  X <- G$X[,1:G$nsdf,drop=FALSE] # accumulate fixed effects into here
-
-  xlab <- rep("",0)
-
-  ## code to deal with t2 smooths, by splitting up into single terms
-  if (G$m) {
-    sme <- mgcv:::expand.t2.smooths(G$smooth)
-    if (is.null(sme)) G$original.smooth <- NULL else {
-      G$original.smooth <- G$smooth
-      G$smooth <- sme ## G's smooth list is replaced by expanded version, until some time after model fitting is complete
-      rm(sme)
-    }
-    ## G$m is always the length of G$smooth here...
-    G$m <- length(G$smooth)
-  }
-
-  if (G$m)
-  for (i in 1:G$m) 
-  { sm <- G$smooth[[i]]
-
-    if (inherits(sm,"tensor.smooth")) stop("te terms can not be used with gamm4. Use t2 instead.")    
-
-
-    sm$X <- G$X[,sm$first.para:sm$last.para,drop=FALSE]
- 
-    if (!sm$fixed) random.i <- random.i+1
-   
-    ZSZ <- list()
-   
-    if (!sm$fixed) { 
-      if (length(sm$S)>1) stop("gamm4 can only handle single penalty smooths")
-      ZSZ<-sm$S[[1]]
-    }
-    XZ<-sm$X
-    k <- ncol(sm$X);j<-0
-   
-    if (!sm$fixed) ## Then reparameterized so that penalty on range space is identity
-    { sm$ZSZ <- ZSZ            ## store these too - for construction of Vp matrix
-      ev<-eigen(ZSZ,symmetric=TRUE) ## eigen-decompose penalty
-      null.rank <- sm$df - sm$rank
-      mult.pen <- FALSE
-
-      p.rank <- ncol(XZ) - null.rank
-      if (p.rank>ncol(XZ)) p.rank <- ncol(XZ)
-      U<-ev$vectors
-      D<-ev$values[1:p.rank]
-      D<-1/sqrt(D)
-      XZU<-XZ%*%U
-
-      ## extract the model matrix for the fixed effect component of the smooth
-      if (p.rank<k-j) Xf <- XZU[,(p.rank+1):(k-j),drop=FALSE]
-      else Xf <- matrix(0,nrow(sm$X),0) # no fixed terms left
-      
-      ## extract the model matrix for the random effect component of the smooth
-      Xr <- t(t(XZU[,1:p.rank,drop=FALSE])*D)
-
-      n.para <- k-j-p.rank # indices for fixed parameters
-      sm$first.f.para <- first.f.para
-      first.f.para <- first.f.para+n.para
-      sm$last.f.para <- first.f.para-1
-      n.para <- ncol(Xr) # indices for random parameters
-      sm$first.r.para <- first.r.para
-      first.r.para <- first.r.para+n.para
-      sm$last.r.para <- first.r.para-1
-    
-      sm$D <- D;sm$U <- U # information (with qrc) for backtransforming to original space 
-
-      term.name <- paste("Xr.",random.i,sep="")
-      term.name <- new.name(term.name,names(data))
-      form <- as.formula(paste("~",term.name,"-1",sep=""))
-     
-      random[[random.i]] <- Xr
-      names(random)[random.i] <- term.name
-      attr(random[[random.i]],"s.label") <- sm$label
-      sm$lmer.name <- term.name ## store the name by which this is identified in lmer call
-      ## eval(parse(text=paste("G$",term.name,"<-Xr",sep="")))
-    } else # term is fixed, so model matrix appended to fixed matrix
-    { Xf <- XZ # whole term goes to fixed 
-      n.para <- ncol(Xf)       # now define where the parameters of this term live 
-      sm$first.f.para <- first.f.para
-      first.f.para <- first.f.para+n.para
-      sm$last.f.para <- first.f.para-1
-    }
-    ## now add appropriate column names to Xf.
-    
-    if (ncol(Xf)) {
-      Xfnames<-rep("",ncol(Xf)) 
-      k<-length(xlab)+1
-      for (j in 1:ncol(Xf)) {
-        xlab[k] <- Xfnames[j] <-
-        new.name(paste(sm$label,"Fx",j,sep=""),xlab)
-        k <- k + 1
-      } 
-      colnames(Xf) <- Xfnames
-    }
-
-    X <- cbind(X,Xf) # add fixed model matrix to overall X
-  
-    sm$X <- NULL
-  
-    G$smooth[[i]] <- sm  ## replace smooth object with transformed version 
-  }
- 
-  G$random <- random ## named list of Random effect matrices
-  G$X <- X  ## fixed effects model matrix
-
-  G
-} ## end of gamm4.setup0
-
-
-gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
-      subset=NULL,na.action,knots=NULL,...)
+gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
+      subset=NULL,na.action,knots=NULL,...) {
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
+## THIS VERSION is for `new' lme4
+  if (packageVersion("lme4")<package_version("0.999999-999")) {
+    ## then simply call old version of gamm4.
+    mc <- match.call()
+    mc[[1]] <- as.name("gamm40")
+    return(eval(mc))
+  }
 
-{ 
   if (!require("lme4")) stop("gamm4() requires package lme4 to be installed")
   if (!require("mgcv")) stop("gamm4() requires package mgcv to be installed")
   if (!require("Matrix")) stop("gamm4() requires package Matrix to be installed")
@@ -667,8 +538,6 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
   if (is.null(random)&&n.sr==0) 
   stop("gamm4 models must have at least 1 smooth with unknown smoothing parameter or at least one other random effect")
 
-  g <- as.factor(G$y*0+1) ## needed, whatever codetools says
-
   offset.name <- attr(mf,"names")[attr(attr(mf,"terms"),"offset")]
 
   yname <- new.name("y",names(mf))
@@ -681,17 +550,11 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
   { lme4.formula <- paste(lme4.formula,"+",offset.name) 
   }
 
-  ## The basic fitting trick is to set the model up by calling b <- lmer(...,doFit=FALSE)
-  ## with a simple i.i.d dummy random effects for the penalized part (random component) 
-  ## of each smooth. Given that
-  ## the smooths have been re-parameterized to have random components with identity 
-  ## matrices as covariances, this results in the right model structure, with the 
-  ## wrong random effect model matrices. Howevever the object b can then be modified 
-  ## to replace theses incorrect model matrices with the correct versions, prior to 
-  ## fitting....
+  ## Basic trick is to call (g)lFormula to set up model, with simple i.i.d. dummy random effects for the 
+  ## penalized component of each smooth. This results in columns of Z being produced for these dummy's,
+  ## which can be over-written with the right thing. NOTE: that lambdat could also be modified, I think!!
 
-
-  ## next add the random effect dummy variables for the smooth
+  ## Add the random effect dummy variables for the smooth
   r.name <- names(G$random) 
   if (n.sr) for (i in 1:n.sr) # adding the constructed variables to the model frame avoiding name duplication
   { mf[[r.name[i]]] <- factor(rep(1:ncol(G$random[[i]]),length=nrow(G$random[[i]])))
@@ -703,39 +566,55 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
   }
   
   lme4.formula <- as.formula(lme4.formula)
-    
-  if (linear) b <- lmer(lme4.formula,data=mf,family=family,weights=G$w,doFit=FALSE)
-  else  b <- glmer(lme4.formula,data=mf,family=family,weights=G$w,doFit=FALSE)
+  
+  ## NOTE: further arguments should be passed here... 
+  b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,...) else 
+                   glFormula(lme4.formula,data=mf,family=family,weights=G$w,...)
 
-  if (n.sr) { ## use Fabian Scheipl's trick of overwriting dummy slots
-     tn <- names(b$FL$fl) 
-     ## some names go with more than one element of b$FL$trms, so...
-     tn <- tn[attr(b$FL$fl,"assign")] ## group name associated with each element of b$FL$trms 
+ 
+  if (n.sr) { ## Fabian Scheipl's trick of overwriting dummy slots revised for new structure
+     tn <- names(b$reTrms$cnms) ## names associated with columns of Z (same order as Gp)
      ind <- 1:length(tn)
-     sn <- names(G$random)
+     sn <- names(G$random) ## names of smooth random components
      for (i in 1:n.sr) { ## loop through random effect smooths
-       k <- ind[sn[i]==tn] ## which trm should contain G$random[[i]] 
-       b$FL$trms[[k]]$A <- b$FL$trms[[k]]$Zt <- as(t(G$random[[i]]),"dgCMatrix")
-       attr(G$random[[i]],"s.label") -> sl
-       attr(b$FL$trms[[k]]$ST,"dimnames") <- list(sl,sl)
+       k <- ind[sn[i]==tn] ## which term should contain G$random[[i]] 
+       ii <- (b$reTrms$Gp[k]+1):b$reTrms$Gp[k+1]
+       b$reTrms$Zt[ii,] <- as(t(G$random[[i]]),"dgCMatrix")
+       b$reTrms$cnms[[k]] <- attr(G$random[[i]],"s.label") 
      }
   }
 
+  ## now do the actual fitting...
   ret <- list()
-
-  if (linear) ret$mer <- do.call(lme4:::lmer_finalize,b)
-  else ret$mer <- do.call(lme4:::glmer_finalize,b)
+  if (linear) {
+    ## Create the deviance function to be optimized:
+    devfun <- do.call(mkLmerDevfun, b)
+    ## Optimize the deviance function:
+    opt <- optimizeLmer(devfun,optimizer="bobyqa",...)
+    ## Package up the results:
+    ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr,...)
+  } else { ## generalized case...
+    ## Create the deviance function for optimizing over theta:
+    devfun <- do.call(mkGlmerDevfun, b)
+    ## Optimize over theta using a rough approximation (i.e. nAGQ = 0):
+    opt <- optimizeGlmer(devfun,...)
+    ## Update the deviance function for optimizing over theta and beta:
+    devfun <- updateGlmerDevfun(devfun, b$reTrms,...)
+    ## Optimize over theta and beta:
+    opt <- optimizeGlmer(devfun, stage=2,...)
+    ## Package up the results:
+    ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr,...)
+  }
 
   rm(b)
-
-  
 
   ### .... fitting finished
 
   ## now fake a gam object 
     
   object<-list(model=mf,formula=formula,smooth=G$smooth,nsdf=G$nsdf,family=family,
-                 df.null=nrow(G$X),y=ret$mer@y,terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
+                 df.null=nrow(G$X),y=getME(ret$mer,"y"),
+                 terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
                  contrasts=G$contrasts,assign=G$assign,na.action=attr(mf,"na.action"),
                  cmX=G$cmX,var.summary=G$var.summary)
   
@@ -746,99 +625,95 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
     ## Then beta = B beta'. B and B^{-1} can be efficiently accumulated
     ## and are useful for stable computation of the covariance matrix
     ## etc... 
-    B <- diag(ncol(G$Xf))
+  
+    B <- Matrix(0,ncol(G$Xf),ncol(G$Xf))
+    diag(B) <- 1
     Xfp <- G$Xf
     ## Transform  parameters back to the original space....
     bf <- as.numeric(lme4::fixef(ret$mer)) ## the fixed effects
     br <- lme4::ranef(ret$mer) ## a named list
-    if (G$nsdf) p<-bf[1:G$nsdf] else p<-array(0,0)
-    if (G$m>0) for (i in 1:G$m)
-    { fx <- G$smooth[[i]]$fixed 
-      first<-G$smooth[[i]]$first.f.para;last<-G$smooth[[i]]$last.f.para
-      if (first <=last) beta<-bf[first:last] else beta<-array(0,0)
-      if (fx) b <- beta 
-      else # not fixed so need to undo transform of random effects etc. 
-      { 
-        b <- as.numeric(br[[G$smooth[[i]]$lmer.name]][[1]])     
-       
-        b <- c(G$smooth[[i]]$D*b,beta) # single penalty case
-        b <- G$smooth[[i]]$U%*%b 
+    if (G$nsdf) p <- bf[1:G$nsdf] else p <- array(0,0) ## fixed parametric componet
+    if (G$m>0) for (i in 1:G$m) {
+      fx <- G$smooth[[i]]$fixed 
+      first <- G$smooth[[i]]$first.f.para; last <- G$smooth[[i]]$last.f.para
+      if (first <=last) beta <- bf[first:last] else beta <- array(0,0)
+      if (fx) b <- beta else { ## not fixed so need to undo transform of random effects etc. 
+        b <- rep(0,0)
+        for (k in 1:length(G$smooth[[i]]$lmer.name)) ## collect all coefs associated with this smooth
+          b <- c(b,as.numeric(br[[G$smooth[[i]]$lmer.name[k]]][[1]]))     
+        b <- b[G$smooth[[i]]$rind] ## make sure coefs are in order expected by smooth
+        b <- c(b,beta) 
+        b <- G$smooth[[i]]$trans.D*b
+        if (!is.null(G$smooth[[i]]$trans.U)) b <- G$smooth[[i]]$trans.U%*%b ## transform back to original 
       }
-      ## if (is.null(G$smooth[[i]]$C)) nc <- 0 else nc <- nrow(G$smooth[[i]]$C) 
-      ## if (nc) b <- qr.qy(G$smooth[[i]]$qrc,c(rep(0,nc),b))
-      first <- object$smooth[[i]]$first.para<-length(p)+1
-      p<-c(p,b)
-      last <- object$smooth[[i]]$last.para<-length(p)
-      ## last few parameters unpenalized in fitting parameterization,
-      ## this records how many...
-      nun <- object$smooth[[i]]$n.unpenalized <- length(beta)
+      p <- c(p,b)
+     
       ## now fill in B...
-      ind <- first:last
+      ind <- G$smooth[[i]]$first.para:G$smooth[[i]]$last.para
       if (!fx) { 
-        D <- c(G$smooth[[i]]$D,rep(1,nun))
-        B[ind,ind] <- t(D*t(G$smooth[[i]]$U))
-        ##  Bi[ind,ind] <- t(G$smooth[[i]]$U)/D
+         D <- G$smooth[[i]]$trans.D
+         if (is.null(G$smooth[[i]]$trans.U)) B[ind,ind] <- Diagonal(length(D),D) else
+         B[ind,ind] <- t(D*t(G$smooth[[i]]$trans.U))
       }
       ## and finally transform G$Xf into fitting parameterization...
       Xfp[,ind] <- G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE]
 
     }
  
-    object$coefficients<-p
+    object$coefficients <- p
 
-    
     ## need to drop smooths from Zt and then
     ## form Z'phiZ + I \sigma^2
-
 
     vr <- lme4::VarCorr(ret$mer) ## list of ranef variance components in the same order as Gp
     
     scale <- as.numeric(attr(vr,"sc"))^2 ## get the scale parameter
-    if (!is.finite(scale)) { 
+    if (!is.finite(scale) || scale==1) { ## NOTE: better test???
       scale <- 1
       object$scale.estimated <- FALSE
     } else object$scale.estimated <- TRUE
     
-    ## The relative variance matrices for each random effect are stored in factorized form TSST' 
-    ## where T is lower tri and S diagonal. `expand' will extract the same factorization 
-    ## for the whole of phi, using sparse matrices. expand returns a permutation matrix P
-    ## but at time of writing the ordering of T and S and Z are consistent without 
-    ## permutation, and inconsistent with it, so it appears to be irrelevant here. 
-
-    phi <- Matrix::expand(ret$mer,sparse = TRUE) ## factorization of phi as TSST'
-        
     sp <- rep(-1,n.sr)
 
-    Zt <- Matrix(0,0,ncol(ret$mer@Zt))
+    Zt <- Matrix(0,0,ncol(getME(ret$mer,"Zt")))
     if (n.sr==0) sn <- NULL ## names by which smooths are known in mer
     rn <- names(vr)
     ind <- rep(0,0) ## index the non-smooth random effects among the random effects
     for (i in 1:length(vr)) {
       if (is.null(sn)||!rn[i]%in%sn) { ## append non smooth r.e.s to Zt
-        ind <- c(ind,(ret$mer@Gp[i]+1):ret$mer@Gp[i+1])
+        Gp <- getME(ret$mer,"Gp") ## group index ends
+        ind <- c(ind,(Gp[i]+1):Gp[i+1])
       } else if (!is.null(sn)) { ## extract smoothing parameters for smooth r.e.s
-        k <- (1:n.sr)[rn[i]==sn] ## where in original smooth ordering is current smooth
+        k <- (1:n.sr)[rn[i]==sn] ## where in original smooth ordering is current smoothing param
         if (as.numeric(vr[[i]]>0)) sp[k] <- scale/as.numeric(vr[[i]]) else 
         sp[k] <- 1e10
       }
     }
 
     if (length(ind)) { ## extract columns corresponding to non-smooth r.e.s 
-      Zt <- ret$mer@Zt[ind,] ## extracting random effects model matrix
-      root.phi <- phi$S[ind,ind]%*%t(phi$T[ind,ind]) ## and corresponding sqrt of cov matrix (phi)
+      Zt <- getME(ret$mer,"Zt")[ind,] ## extracting random effects model matrix
+      root.phi <- getME(ret$mer,"Lambdat")[ind,ind] ## and corresponding sqrt of cov matrix (phi)
     }
 
-    object$prior.weights <- ret$mer@pWt
-
-    if (length(ret$mer@var)==0) { 
-      V <- Diagonal(ncol(Zt))*scale
-      object$weights <- object$prior.weights
-    } else 
-    { V <- Diagonal(x=1/ret$mer@var)*scale ## the response variance conditional on the r.e.s
-       object$weights <- 1/ret$mer@var
+    object$prior.weights <- G$w
+                          
+    if (linear) {
+      object$weights <- object$prior.weights 
+      V <- Diagonal(n=length(object$weights),x=scale/object$weights) 
+    } else { 
+     # mu <- getME(ret$mer,"mu")
+     # eta <- family$linkfun(mu)
+      object$weights <- ret$mer@resp$sqrtWrkWt()^2
+      ## object$prior.weights*family$mu.eta(eta)^2/family$variance(mu)
+      V <- Diagonal(x=1/object$weights)*scale
+      #V <- Diagonal(x=scale*family$variance(mu)/object$prior.weights)
     }
+
   
     if (nrow(Zt)>0) V <- V + crossprod(root.phi%*%Zt)*scale ## data or pseudodata cov matrix, treating smooths as fixed now
+
+    ## NOTE: Cholesky probably better in the following - then pivoting 
+    ##       automatic when solving....
 
     R <- Matrix:::chol(V,pivot=TRUE);piv <- attr(R,"pivot") 
 
@@ -847,33 +722,30 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
     
     if (is.null(piv)) {
       WX <- as(solve(t(R),Xfp),"matrix")    ## V^{-.5}Xp -- fit parameterization
-      XVX <- as(solve(t(R),G$Xf),"matrix")
+      XVX <- as(solve(t(R),G$Xf),"matrix")  ## same in original parameterization 
     } else {
       WX <- as(solve(t(R),Xfp[piv,]),"matrix")    ## V^{-.5}Xp -- fit parameterization
-      XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")
+      XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")  ## same in original parameterization
     }
-
     qrz <- qr(XVX,LAPACK=TRUE)
     object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
 
     XVX <- crossprod(object$R) ## X'V^{-1}X original parameterization
 
-    object$R <- object$R * sqrt(scale)
-    
-    ## XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
     object$sp <- sp
-
-    Sp<-matrix(0,ncol(G$Xf),ncol(G$Xf)) # penalty matrix - fit param
+    
+    colx <- ncol(G$Xf)
+    Sp <- matrix(0,colx,colx) # penalty matrix - fit param
     first <- G$nsdf+1
     k <- 1
     if (G$m>0) for (i in 1:G$m) { # Accumulate the total penalty matrix
-      n.para <- object$smooth[[i]]$last.para - object$smooth[[i]]$first.para + 1
-      last <- first + n.para - 1 
       if (!object$smooth[[i]]$fixed) {
-        nun <- object$smooth[[i]]$n.unpenalized
-        diag(Sp)[first:(last-nun)] <- sqrt(object$sp[k])
-        k <- k+1														           }
-     
+        ii <- object$smooth[[i]]$first.para:object$smooth[[i]]$last.para ## index this smooth's params
+        for (j in 1:length(object$smooth[[i]]$S)) { ## work through penalty list
+          ind <- ii[object$smooth[[i]]$pen.ind == j] ## index of currently penalized
+          diag(Sp)[ind] <-  sqrt(object$sp[k]) ## diagonal penalty
+          k <- k+1
+        }														              }
       first <- last + 1 
     }
    
@@ -881,15 +753,15 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
     ## idea is that cov matrix is computed stably in
     ## fitting parameterization, and then transformed to
     ## original parameterization. 
-    qrx <- qr(rbind(WX,Sp/sqrt(scale)),pivot=TRUE)
+    qrx <- qr(rbind(WX,Sp/sqrt(scale)),LAPACK=TRUE)
     Ri <- backsolve(qr.R(qrx),diag(ncol(WX)))
-    ind <- qrx$pivot;ind[ind] <- qrx$pivot
-    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization
+    ind <- qrx$pivot;ind[ind] <- 1:length(ind)## qrx$pivot
+    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization Ri Ri' = cov
     Vb <- B%*%Ri; Vb <- Vb%*%t(Vb)
 
     object$edf<-rowSums(Vb*t(XVX))
    
-    object$df.residual <- length(object$y) - sum(object$df.residual)
+    object$df.residual <- length(object$y) - sum(object$edf)
 
     object$sig2 <- scale
     if (linear) { object$method <- "lmer.REML"
@@ -919,7 +791,7 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
     object$linear.predictors <- predict.gam(object,type="link")
     object$fitted.values <- object$family$linkinv(object$linear.predictors)
     
-    object$residuals <- lme4:::residuals(ret$mer) 
+    object$residuals <- residuals(ret$mer) 
 
     if (G$nsdf>0) term.names<-colnames(G$X)[1:G$nsdf] else term.names<-array("",0)
     n.smooth<-length(G$smooth) 
@@ -940,9 +812,14 @@ gamm40 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NUL
     if (!is.null(G$Xcentre)) object$Xcentre <- G$Xcentre ## any column centering applied to smooths
 
     ret$gam<-object
+    class(gamm4) <- c("gamm4","list")
     ret
 
-} ## end of gamm40
+} ## end of gamm4
+
+
+
+
 
 
 
@@ -961,7 +838,3 @@ print.gamm4.version <- function()
 
 .onUnload <- function(libpath) {}
 
-.First.lib <- function(lib, pkg) {
-  print.gamm4.version()
- 
-}

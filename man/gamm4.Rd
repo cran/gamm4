@@ -3,9 +3,11 @@
 %- Also NEED an `\alias' for EACH other topic documented here.
 \title{Generalized Additive Mixed Models using lme4 and mgcv}
 \description{ Fits the specified  generalized additive mixed model (GAMM) to
-data, by a call to \code{lmer} in the normal errors identity link case, or by 
-a call to \code{glmer} otherwise  (see \code{\link[lme4]{lmer}}). Smoothness selection is by REML in the gaussian 
-additive case and ML otherwise. 
+data, by making use of the \code{modular} fitting functions provided 
+by lme4 (new version). For earlier lme4 versions modelling fitting is via
+ a call to \code{lmer} in the normal errors identity link case, or by 
+a call to \code{glmer} otherwise  (see \code{\link[lme4]{lmer}}). Smoothness selection is by REML in the Gaussian 
+additive case and (Laplace approximate) ML otherwise. 
 
 \code{gamm4} is based on \code{\link[mgcv]{gamm}} from package \code{mgcv}, but uses \code{lme4} rather than 
 \code{nlme} as the underlying fitting engine via a trick due to Fabian Scheipl. 
@@ -13,11 +15,15 @@ additive case and ML otherwise.
 performance for binary and low mean count data. Its main disadvantage is that it can not handle most multi-penalty 
 smooths (i.e. not \code{\link[mgcv]{te}} type tensor products or adaptive smooths) and there is 
 no facilty for \code{nlme} style correlation structures. Tensor product smoothing is available via 
-\code{\link[mgcv]{t2}} terms.
+\code{\link[mgcv]{t2}} terms (Wood, Scheipl and Faraway, 2013).
  
 For fitting generalized additive models without random effects, \code{gamm4} is much slower 
 than \code{\link[mgcv]{gam}} and has slightly worse MSE performance than \code{\link[mgcv]{gam}} 
-with REML smoothness selection.
+with REML smoothness selection. For fitting GAMMs with modest numbers of i.i.d. random coefficients 
+then \code{\link[mgcv]{gam}} is faster than \code{gamm4} (or \code{\link[mgcv]{bam}} for large data 
+sets). \code{gamm4} is most useful when the random effects are not i.i.d., or when there are large 
+numbers of random coeffecients (more than several hundred), each applying to only a small proportion 
+of the response data. 
 
 To use this function effectively it helps to be quite familiar with the use of
 \code{\link[mgcv]{gam}} and \code{\link[lme4]{lmer}}.
@@ -107,11 +113,11 @@ approximation: hence the usual methods of model comparison are entirely legitima
 
 \references{
 
-Bates D. and M. Maechler (2009). lme4: Linear mixed-effects
-  models using S4 classes. \url{http://CRAN.R-project.org/package=lme4}
+Bates D., M. Maechler, B. Bolker & S. Walker (2013). lme4: Linear mixed-effects
+  models using Eigen and S4. \url{http://CRAN.R-project.org/package=lme4}
 
-
-Scheipl, F. (2009) amer: Additive mixed models with lme4.\url{http://CRAN.R-project.org/package=amer}
+Wood S.N., Scheipl, F. and Faraway, J.J. (2013/2011 online) Straightforward intermediate 
+rank tensor product smoothing in mixed models. Statistics and Computing 23(3): 341-360
 
 Wood, S.N. (2004) Stable and efficient multiple smoothing parameter estimation for
 generalized additive models. Journal of the American Statistical Association. 99:673-686
@@ -150,7 +156,7 @@ This routine is obviously less well tested than \link[mgcv]{gamm}.
  }
 
 \examples{
-## NOTE: some `gamm' calls are flagged as do not run simply to
+## NOTE: some examples are flagged as 'do not run' simply to
 ## save time in package checking.
 
 #################################
@@ -173,29 +179,29 @@ plot(br$gam,pages=1)
 summary(br$gam) ## same from `gamm4'
 summary(br$mer) ## underlying mixed model
 anova(br$gam) 
-rm(dat)
 
 #################################################################
 ## Add a factor to the linear predictor, to be modelled as random
 ## and make response Poisson. Again compare `gamm' and `gamm4'
 #################################################################
 
-dat <- gamSim(6,n=400,scale=.2,dist="poisson")
-
 \dontrun{
-b2<-gamm(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
-         data=dat,random=list(fac=~1))
-plot(b2$gam,pages=1)
-}
-b2r<-gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
-         data=dat,random = ~ (1|fac))
+g <- as.factor(sample(1:20,400,replace=TRUE))
+dat$f <- dat$f + model.matrix(~ g-1)%*%rnorm(20)*4
+dat$y <- rpois(400,exp(dat$f/7))
 
+b2<-gamm(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
+         data=dat,random=list(g=~1))
+plot(b2$gam,pages=1)
+
+b2r<-gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
+         data=dat,random = ~ (1|g))
 
 plot(b2r$gam,pages=1)
 
 rm(dat)
-vis.gam(b2r$gam)
-
+vis.gam(b2r$gam,theta=35)
+}
 
 ##################################
 # Multivariate varying coefficient
@@ -260,7 +266,7 @@ br$gam
 plot(br$gam)
 
 ## try a Poisson example, based on the same linear predictor...
-
+\dontrun{
 lp <- mu/5
 y <- rpois(exp(lp),exp(lp)) ## simulated response
 
@@ -268,14 +274,10 @@ y <- rpois(exp(lp),exp(lp)) ## simulated response
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = ~ (1|a/b))
 
-\dontrun{
 ba <- gamm(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = list(a=~1,b=~1))
-}
 
 par(mfrow=c(2,2))
-plot(br$gam);
-
-\dontrun{
+plot(br$gam)
 plot(ba$gam)
 }
 ## and now fit full version (very slow)...
@@ -300,13 +302,13 @@ summary(br$gam)
 ####################################
 # Timing comparison with `gam'...  #                                      
 ####################################
-
+\dontrun{
 dat <- gamSim(1,n=600,dist="binary",scale=.33)
 
-system.time(lr.fit0 <- gam(y~s(x0)+s(x1)+s(x2)+s(x3),
+system.time(lr.fit0 <- gam(y~s(x0)+s(x1)+s(x2),
             family=binomial,data=dat,method="ML"))
 
-system.time(lr.fit <- gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),
+system.time(lr.fit <- gamm4(y~s(x0)+s(x1)+s(x2),
             family=binomial,data=dat))
 
 lr.fit0;lr.fit$gam
@@ -322,7 +324,7 @@ for (k in 1:4) {
   lines(xx[ind],(ff-mean(ff))[ind]*.33,col=2)
 }
 par(op)
-
+}
 ####################################
 # Simple random effects comparison 
 # with `gam'
