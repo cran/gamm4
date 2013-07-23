@@ -20,7 +20,7 @@ no facilty for \code{nlme} style correlation structures. Tensor product smoothin
 For fitting generalized additive models without random effects, \code{gamm4} is much slower 
 than \code{\link[mgcv]{gam}} and has slightly worse MSE performance than \code{\link[mgcv]{gam}} 
 with REML smoothness selection. For fitting GAMMs with modest numbers of i.i.d. random coefficients 
-then \code{\link[mgcv]{gam}} is faster than \code{gamm4} (or \code{\link[mgcv]{bam}} for large data 
+then \code{gamm4} is slower than \code{\link[mgcv]{gam}} (or \code{\link[mgcv]{bam}} for large data 
 sets). \code{gamm4} is most useful when the random effects are not i.i.d., or when there are large 
 numbers of random coeffecients (more than several hundred), each applying to only a small proportion 
 of the response data. 
@@ -82,8 +82,7 @@ precision matrix when the smooth is treated as a random effect. Estimating the d
 amounts to estimating the variance parameter for the term. 
 
 \code{gamm4} uses the same reparameterization trick employed by \code{\link[mgcv]{gamm}} to allow any single quadratic 
-penalty smoother to be used (see Wood, 2004, or 2006 for details). Given the reparameterization then Fabian Scheipl's 
-trick for getting \code{\link[lme4]{lmer}} to fit a GAMM can be employed (see package \code{amer}). Estimation is by 
+penalty smoother to be used (see Wood, 2004, or 2006 for details). Given the reparameterization then the modular fitting approach employed in \code{\link[lme4]{lmer}} can be used to fit a GAMM. Estimation is by 
 Maximum Likelihood in the generalized case, and REML in the gaussian additive model case. \code{gamm4} allows 
 the random effects specifiable with \code{\link[lme4]{lmer}} to be combined with any number of any of the (single penalty) smooth
 terms available in \code{\link[mgcv]{gam}} from package \code{mgcv} as well as \code{\link[mgcv]{t2}} tensor product smooths. 
@@ -187,7 +186,7 @@ anova(br$gam)
 
 \dontrun{
 g <- as.factor(sample(1:20,400,replace=TRUE))
-dat$f <- dat$f + model.matrix(~ g-1)%*%rnorm(20)*4
+dat$f <- dat$f + model.matrix(~ g-1)\%*\%rnorm(20)*2
 dat$y <- rpois(400,exp(dat$f/7))
 
 b2<-gamm(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
@@ -317,7 +316,7 @@ cor(fitted(lr.fit0),fitted(lr.fit$gam))
 ## plot model components with truth overlaid in red
 op <- par(mfrow=c(2,2))
 fn <- c("f0","f1","f2","f3");xn <- c("x0","x1","x2","x3")
-for (k in 1:4) {
+for (k in 1:3) {
   plot(lr.fit$gam,select=k)
   ff <- dat[[fn[k]]];xx <- dat[[xn[k]]]
   ind <- sort.int(xx,index.return=TRUE)$ix
