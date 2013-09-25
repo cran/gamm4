@@ -12,6 +12,13 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.2-2
+
+* Some tidying and modification to avoid cran check problems for code
+  back compatible with old lme4.
+
+* Fix of erroroneous passing of '...' to modular lme4 fitting functions.
+
 0.2-1
 
 * Some restructuring - initial model setup in common for both old and new 

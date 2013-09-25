@@ -155,36 +155,53 @@ This routine is obviously less well tested than \link[mgcv]{gamm}.
  }
 
 \examples{
-## NOTE: some examples are flagged as 'do not run' simply to
-## save time in package checking.
+## NOTE: most examples are flagged as 'do not run' simply to
+## save time in package checking on CRAN.
 
-#################################
-## A simple additive model...
-#################################
+###################################
+## A simple additive mixed model...
+###################################
 library(gamm4)
 
 set.seed(0) 
-dat <- gamSim(1,n=400,scale=2) ## simulate data
+dat <- gamSim(1,n=400,scale=2) ## simulate 4 term additive truth
+## Now add 20 level random effect `fac'...
+dat$fac <- fac <- as.factor(sample(1:20,400,replace=TRUE))
+dat$y <- dat$y + model.matrix(~fac-1)\%*\%rnorm(20)*.5
 
-\dontrun{
-b <- gamm(y~s(x0)+s(x1)+s(x2)+s(x3),data=dat)
-plot(b$gam,pages=1)
-summary(b$gam)  ## gam style summary of fitted model
-}
-
-br <- gamm4(y~s(x0)+s(x1)+s(x2)+s(x3),data=dat)
+br <- gamm4(y~s(x0)+x1+s(x2),data=dat,random=~(1|fac))
 plot(br$gam,pages=1)
 
-summary(br$gam) ## same from `gamm4'
+summary(br$gam) ## summary of gam
 summary(br$mer) ## underlying mixed model
 anova(br$gam) 
 
+## compare gam fit of the same
+bg <- gam(y~s(x0)+x1+s(x2)+s(fac,bs="re"),
+          data=dat,method="REML")
+plot(bg,pages=1)
+gam.vcomp(bg)
+
+##########################
+## Poisson example GAMM...
+##########################
+## simulate data...
+x <- runif(100)
+fac <- sample(1:20,100,replace=TRUE)
+eta <- x^2*3 + fac/20; fac <- as.factor(fac)
+y <- rpois(100,exp(eta))
+
+## fit model and examine it...
+bp <- gamm4(y~s(x),family=poisson,random=~(1|fac))
+plot(bp$gam)
+bp$mer
+
+\dontrun{
 #################################################################
 ## Add a factor to the linear predictor, to be modelled as random
 ## and make response Poisson. Again compare `gamm' and `gamm4'
 #################################################################
 
-\dontrun{
 g <- as.factor(sample(1:20,400,replace=TRUE))
 dat$f <- dat$f + model.matrix(~ g-1)\%*\%rnorm(20)*2
 dat$y <- rpois(400,exp(dat$f/7))
@@ -200,7 +217,7 @@ plot(b2r$gam,pages=1)
 
 rm(dat)
 vis.gam(b2r$gam,theta=35)
-}
+
 
 ##################################
 # Multivariate varying coefficient
@@ -247,15 +264,14 @@ y <- mu + rnorm(n)*2 ## response data
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = ~ (1|a/b))
 
-\dontrun{
 ba <- gamm(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = list(a=~1,b=~1),method="REML")
-}
+
 
 par(mfrow=c(2,2))
 plot(br$gam)
-\dontrun{
+
 plot(ba$gam)
-}
+
 ## now fit the full model
 
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),random = ~ (x+0|g) + (1|g) + (1|a/b))
@@ -265,7 +281,7 @@ br$gam
 plot(br$gam)
 
 ## try a Poisson example, based on the same linear predictor...
-\dontrun{
+
 lp <- mu/5
 y <- rpois(exp(lp),exp(lp)) ## simulated response
 
@@ -278,14 +294,14 @@ ba <- gamm(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = list(a=~1
 par(mfrow=c(2,2))
 plot(br$gam)
 plot(ba$gam)
-}
+
 ## and now fit full version (very slow)...
-\dontrun{
+
 br <- gamm4(y ~ s(v,w,by=z) + s(r,k=20,bs="cr"),family=poisson,random = ~ (x|g) + (1|a/b))
 br$mer
 br$gam
 plot(br$gam)
-}
+
 
 ####################################
 # Different smooths of x2 depending 
@@ -301,7 +317,7 @@ summary(br$gam)
 ####################################
 # Timing comparison with `gam'...  #                                      
 ####################################
-\dontrun{
+
 dat <- gamSim(1,n=600,dist="binary",scale=.33)
 
 system.time(lr.fit0 <- gam(y~s(x0)+s(x1)+s(x2),
@@ -324,34 +340,6 @@ for (k in 1:3) {
 }
 par(op)
 }
-####################################
-# Simple random effects comparison 
-# with `gam'
-####################################
-
-dat <- gamSim(1,n=400,scale=2) ## simulate 4 term additive truth
-## Now add some random effects to the simulation. Response is 
-## grouped into one of 20 groups by `fac' and each groups has a
-## random effect added....
-fac <- as.factor(sample(1:20,400,replace=TRUE))
-X <- model.matrix(~fac-1)
-b <- rnorm(20)*.5
-dat$y <- dat$y + X\%*\%b
-dat$fac <- fac
-
-## now fit appropriate random effect model using `gam'...
-
-rm <- gam(y~ s(fac,bs="re")+s(x0)+s(x1)+s(x2)+s(x3),data=dat,
-          method="REML")
-plot(rm,pages=1)
-## Get estimated random effects standard deviation...
-gam.vcomp(rm)
-
-## Now do same thing with gamm4
-rmr <- gamm4(y~ s(x0)+s(x1)+s(x2)+s(x3),data=dat,
-            random = ~ (1|fac))
-plot(rmr$gam,pages=1)
-rmr$mer
 
 ######################################
 ## A "signal" regression example, in

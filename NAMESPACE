@@ -1,2 +1,6 @@
-importFrom(Matrix,t,crossprod,solve,rowSums)
+import(Matrix)
+import(lme4)
+import(mgcv)
+import(methods)
+#importFrom(Matrix,t,crossprod,solve,rowSums)
 export(gamm4)
