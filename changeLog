@@ -12,6 +12,13 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.2-3
+
+* modified to extract REML using REMLcrit to avoid lme4 warning
+
+* argument drop.unused.levels added to gamm4, to facilitate mrf smoothing when
+  some regions are data-less. 
+
 0.2-2
 
 * Some tidying and modification to avoid cran check problems for code

@@ -2,7 +2,8 @@
 ## Reparameterization trick as Wood (2004,2006). 
 ## fooling lmer using Fabian Scheipl's trick (now adapted for new lme4).
 
-gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm.setup"),knots=NULL)
+gamm4.setup<-function(formula,pterms,
+                      data=stop("No data supplied to gamm.setup"),knots=NULL)
 ## set up the model matrix, penalty matrices and auxilliary information about the smoothing bases
 ## needed for a gamm4 fit.
 ## There is an implicit assumption that any rank deficient penalty does not penalize 
@@ -17,7 +18,8 @@ gamm4.setup<-function(formula,pterms,data=stop("No data supplied to gamm.setup")
 { 
   ## first simply call `gam.setup'....
 
-  G <- mgcv:::gam.setup(formula,pterms,data=data,knots=knots,sp=NULL,
+  G <- mgcv:::gam.setup(formula,pterms,
+                 data=data,knots=knots,sp=NULL,
                  min.sp=NULL,H=NULL,absorb.cons=TRUE,sparse.cons=0,gamm.call=TRUE)
  
   if (!is.null(G$L)) stop("gamm can not handle linked smoothing parameters (probably from use of `id' or adaptive smooths)")
@@ -146,7 +148,7 @@ gamm4.oldwork <- function(G,mf,n.sr,r.name,family,formula,gam.terms,pTerms,lme4.
     
   object<-list(model=mf,formula=formula,smooth=G$smooth,nsdf=G$nsdf,family=family,
                  df.null=nrow(G$X),y=ret$mer@y, ## getME problem - don't know how else to extract
-                 terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
+                 terms=gam.terms,pterms=G$pterms,xlevels=G$xlevels,
                  contrasts=G$contrasts,assign=G$assign,na.action=attr(mf,"na.action"),
                  cmX=G$cmX,var.summary=G$var.summary)
   
@@ -355,7 +357,7 @@ gamm4.oldwork <- function(G,mf,n.sr,r.name,family,formula,gam.terms,pTerms,lme4.
 
 
 gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
-      subset=NULL,na.action,knots=NULL,...) {
+      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,...) {
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
@@ -377,14 +379,14 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   } else random.vars <- NULL
 
   # create model frame.....
-  gp<-interpret.gam(formula) # interpret the formula 
+  gp <- interpret.gam(formula) # interpret the formula 
   
-  mf<-match.call(expand.dots=FALSE)
+  mf <- match.call(expand.dots=FALSE)
  
-  mf$formula<-gp$fake.formula
-  mf$family<-mf$scale<-mf$knots<-mf$random <- mf$...<-NULL ## mf$weights?
-  mf$drop.unused.levels<-TRUE
-  mf[[1]]<-as.name("model.frame")
+  mf$formula <- gp$fake.formula
+  mf$family <- mf$scale <- mf$knots <- mf$random <- mf$... <-NULL ## mf$weights?
+  mf$drop.unused.levels <- drop.unused.levels
+  mf[[1]] <- as.name("model.frame")
   pmf <- mf
   gmf <- eval(mf, parent.frame()) # the model frame now contains all the data, for the gam part only 
   gam.terms <- attr(gmf,"terms") # terms object for `gam' part of fit -- need this for prediction to work properly
@@ -416,7 +418,6 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
   pmf$formula <- gp$pf
   pmf <- eval(pmf, parent.frame()) # pmf contains all data for non-smooth part 
-  
   pTerms <- attr(pmf,"terms")
 
   if (is.character(family)) family<-eval(parse(text=family))
@@ -427,6 +428,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
   G <- gamm4.setup(gp,pterms=pTerms,data=mf,knots=knots)
   
+  ##G$pterms <- pTerms
   G$var.summary <- var.summary    
 
   n.sr <- length(G$random) # number of random smooths (i.e. s(...,fx=FALSE,...) terms)
@@ -463,7 +465,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   
   lme4.formula <- as.formula(lme4.formula)
   
-  if (old.lme4) return(gamm4.oldwork(G,mf,n.sr,r.name,family,formula,gam.terms,pTerms,lme4.formula,linear))
+  if (old.lme4) return(gamm4.oldwork(G,mf,n.sr,r.name,family,formula,gam.terms,G$pterms,lme4.formula,linear))
 
   ## NOTE: further arguments should be passed here... 
   b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,...) else 
@@ -512,7 +514,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     
   object<-list(model=mf,formula=formula,smooth=G$smooth,nsdf=G$nsdf,family=family,
                  df.null=nrow(G$X),y=getME(ret$mer,"y"),
-                 terms=gam.terms,pterms=pTerms,xlevels=G$xlevels,
+                 terms=gam.terms,pterms=G$pterms,xlevels=G$xlevels,
                  contrasts=G$contrasts,assign=G$assign,na.action=attr(mf,"na.action"),
                  cmX=G$cmX,var.summary=G$var.summary)
   pvars <- all.vars(delete.response(object$terms))
@@ -707,7 +709,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     names(object$edf) <- term.names
     names(object$sp) <- names(G$sp)
 
-    object$gcv.ubre <- deviance(ret$mer)
+    object$gcv.ubre <- if (isREML(ret$mer)) REMLcrit(ret$mer) else deviance(ret$mer)
 
     if (!is.null(G$Xcentre)) object$Xcentre <- G$Xcentre ## any column centering applied to smooths
 

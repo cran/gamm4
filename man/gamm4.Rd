@@ -32,7 +32,7 @@ To use this function effectively it helps to be quite familiar with the use of
 
 \usage{
 gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
-      subset=NULL,na.action,knots=NULL,...)
+      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,...)
 }
 
 \arguments{ 
@@ -63,10 +63,11 @@ to supply the number-of-trials for binomial data, when the response is proportio
           ``factory-fresh'' default is `na.omit'.}
 
 
-
 \item{knots}{this is an optional list containing user specified knot values to be used for basis construction. 
 Different terms can use different numbers of knots, unless they share a covariate.}
 
+\item{drop.unused.levels}{by default unused levels are dropped from factors before fitting. For some smooths 
+involving factor variables you might want to turn this off. Only do so if you know what you are doing.}
 
 \item{...}{further arguments for passing on e.g. to \code{lmer}} 
 }
