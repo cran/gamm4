@@ -114,7 +114,7 @@ approximation: hence the usual methods of model comparison are entirely legitima
 \references{
 
 Bates D., M. Maechler, B. Bolker & S. Walker (2013). lme4: Linear mixed-effects
-  models using Eigen and S4. \url{http://CRAN.R-project.org/package=lme4}
+  models using Eigen and S4. \url{https://cran.r-project.org/package=lme4}
 
 Wood S.N., Scheipl, F. and Faraway, J.J. (2013/2011 online) Straightforward intermediate 
 rank tensor product smoothing in mixed models. Statistics and Computing 23(3): 341-360
@@ -127,7 +127,7 @@ and Hall/CRC Press.
 
 For more GAMM references see \code{\link[mgcv]{gamm}}
 
-\url{http://www.maths.bath.ac.uk/~sw283/}
+\url{http://www.maths.bris.ac.uk/~sw15190/}
 }
 \author{ Simon N. Wood \email{simon.wood@r-project.org}}
 

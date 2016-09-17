@@ -45,7 +45,7 @@ gamm4.setup<-function(formula,pterms,
     
     sm <- G$smooth[[i]]
     sm$X <- G$X[,sm$first.para:sm$last.para,drop=FALSE]
-    rasm <- mgcv:::smooth2random(sm,used.names,type=2) ## convert smooth to random effect and fixed effects
+    rasm <- mgcv::smooth2random(sm,used.names,type=2) ## convert smooth to random effect and fixed effects
     used.names <- c(used.names,names(rasm$rand))    
 
     sm$fixed <- rasm$fixed
@@ -730,7 +730,8 @@ print.gamm4.version <- function()
   version <- version[pmatch("Version",version)]
   um <- strsplit(version," ")[[1]]
   version <- um[nchar(um)>0][2]
-  cat(paste("This is gamm4 ",version,"\n",sep=""))
+  hello <- paste("This is gamm4 ",version,"\n",sep="")
+  packageStartupMessage(hello)
 }
 
 .onAttach <- function(...) { 

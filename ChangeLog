@@ -12,6 +12,12 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.2-4
+
+* start up message changed to use packageStartupMessage.
+
+* Various imports in NAMESPACE.
+
 0.2-3
 
 * modified to extract REML using REMLcrit to avoid lme4 warning
