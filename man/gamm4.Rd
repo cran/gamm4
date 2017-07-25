@@ -32,7 +32,8 @@ To use this function effectively it helps to be quite familiar with the use of
 
 \usage{
 gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
-      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,...)
+      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,
+      REML=TRUE,control=NULL,start=NULL,verbose=0L,...)
 }
 
 \arguments{ 
@@ -69,7 +70,15 @@ Different terms can use different numbers of knots, unless they share a covariat
 \item{drop.unused.levels}{by default unused levels are dropped from factors before fitting. For some smooths 
 involving factor variables you might want to turn this off. Only do so if you know what you are doing.}
 
-\item{...}{further arguments for passing on e.g. to \code{lmer}} 
+\item{REML}{passed on to \code{\link{lmer}} fitting routines (but not \code{\link{glmer}} fitting routines) to control whether REML or ML is used.}
+
+\item{control}{\code{\link{lmerControl}} or \code{\link{glmerControl}} list as appropriate (\code{NULL} means defaults are used).}
+
+\item{start}{starting value list as used by \code{\link{lmer}} or \code{\link{glmer}}.}
+
+\item{verbose}{passed on to fitting \code{lme4} fitting routines.}
+
+\item{...}{further arguments for passing on to model setup routines.} 
 }
 
 %- maybe also `usage' for other objects documented here.
@@ -202,10 +211,12 @@ bp$mer
 ## Add a factor to the linear predictor, to be modelled as random
 ## and make response Poisson. Again compare `gamm' and `gamm4'
 #################################################################
-
+set.seed(6)
+dat <- gamSim(1,n=400,scale=2) ## simulate 4 term additive truth
+## add random effect...
 g <- as.factor(sample(1:20,400,replace=TRUE))
 dat$f <- dat$f + model.matrix(~ g-1)\%*\%rnorm(20)*2
-dat$y <- rpois(400,exp(dat$f/7))
+dat$y <- rpois(400,exp(dat$f/7+1))
 
 b2<-gamm(y~s(x0)+s(x1)+s(x2)+s(x3),family=poisson,
          data=dat,random=list(g=~1))

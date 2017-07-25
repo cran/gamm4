@@ -26,8 +26,7 @@ gamm4.setup<-function(formula,pterms,
   # now perform re-parameterization...
 
   first.f.para <- G$nsdf+1 
-  first.r.para <- 1
- 
+  
   random <- list()
   
   if (G$nsdf>0) ind <- 1:G$nsdf else ind <- rep(0,0)  
@@ -64,7 +63,7 @@ gamm4.setup<-function(formula,pterms,
 
     ## now append random effects to main list
     n.para <- 0 ## count random coefficients
-    rinc <- rind <- rep(0,0)
+    #rinc <- rind <- rep(0,0)
     if (!sm$fixed) {
       for (k in 1:length(rasm$rand)) n.para <- n.para + ncol(rasm$rand[[k]])
       sm$lmer.name <- names(rasm$rand)
@@ -97,7 +96,7 @@ gamm4.setup<-function(formula,pterms,
     sm$last.f.para <- first.f.para - 1 ## note less than sm$first.f.para => no fixed
 
     ## store indices of random parameters in smooth specific array
-    sm$rind <- rasm$rind #- 1 + first.r.para
+    sm$rind <- rasm$rind 
     sm$rinc <- rasm$rinc 
 
     sm$pen.ind <- rasm$pen.ind ## pen.ind==i TRUE for coef penalized by ith penalty
@@ -356,23 +355,24 @@ gamm4.oldwork <- function(G,mf,n.sr,r.name,family,formula,gam.terms,pTerms,lme4.
 } ## gamm4.oldwork
 
 
+
+
+
+
+
+
 gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
-      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,...) {
+      subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,REML=TRUE,
+      control=NULL,start=NULL,verbose=0L,...) {
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
 ## THIS VERSION is for `new' lme4
   if (packageVersion("lme4")<package_version("0.999999-999")) {
     old.lme4 <- TRUE
-    ## then simply call old version of gamm4.
-#    mc <- match.call()
-#    mc[[1]] <- as.name("gamm40")
-#    return(eval(mc))
+    warning("use of lme4 versions < 1.0 is deprecated")
   } else old.lme4 <- FALSE
 
-  #if (!require("lme4")) stop("gamm4() requires package lme4 to be installed")
-  #if (!require("mgcv")) stop("gamm4() requires package mgcv to be installed")
-  #if (!require("Matrix")) stop("gamm4() requires package Matrix to be installed")
   if (!is.null(random)) {
     if (!inherits(random,"formula")) stop("gamm4 requires `random' to be a formula")
     random.vars <- all.vars(random)
@@ -384,7 +384,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   mf <- match.call(expand.dots=FALSE)
  
   mf$formula <- gp$fake.formula
-  mf$family <- mf$scale <- mf$knots <- mf$random <- mf$... <-NULL ## mf$weights?
+  mf$REML <- mf$verbose <- mf$control <- mf$start <- mf$family <- mf$scale <-
+             mf$knots <- mf$random <- mf$... <-NULL ## mf$weights?
   mf$drop.unused.levels <- drop.unused.levels
   mf[[1]] <- as.name("model.frame")
   pmf <- mf
@@ -400,7 +401,6 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   rm(gmf)
 
   if (nrow(mf)<2) stop("Not enough (non-NA) data to do anything meaningful")
-  Terms <- attr(mf,"terms")    
   
   ## summarize the *raw* input variables
   ## note can't use get_all_vars here -- buggy with matrices
@@ -428,7 +428,6 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
   G <- gamm4.setup(gp,pterms=pTerms,data=mf,knots=knots)
   
-  ##G$pterms <- pTerms
   G$var.summary <- var.summary    
 
   n.sr <- length(G$random) # number of random smooths (i.e. s(...,fx=FALSE,...) terms)
@@ -460,16 +459,19 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   }
   
   if (!is.null(random)) { ## append the regular random effects
-    lme4.formula <- paste(lme4.formula,"+",substring(deparse(random),first=2))
+    lme4.formula <- paste(lme4.formula,"+",
+                    substring(paste(deparse(random,backtick=TRUE),collapse=""),first=2))
   }
   
   lme4.formula <- as.formula(lme4.formula)
   
   if (old.lme4) return(gamm4.oldwork(G,mf,n.sr,r.name,family,formula,gam.terms,G$pterms,lme4.formula,linear))
 
+  if (is.null(control)) control <- if (linear) lmerControl() else glmerControl() 
+
   ## NOTE: further arguments should be passed here... 
-  b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,...) else 
-                   glFormula(lme4.formula,data=mf,family=family,weights=G$w,...)
+  b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,REML=REML,control=control,...) else 
+                   glFormula(lme4.formula,data=mf,family=family,weights=G$w,control=control,...)
 
  
   if (n.sr) { ## Fabian Scheipl's trick of overwriting dummy slots revised for new structure
@@ -486,24 +488,28 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
   ## now do the actual fitting...
   ret <- list()
+  #arg <- list(...)
+  #arg <- arg[!(names(arg) %in% names(b))]
+  #b <- c(b,arg) ## add '...' arguments for use with do.call
+  b$control <- control; b$verbose=verbose; b$start=start
   if (linear) {
     ## Create the deviance function to be optimized:
     devfun <- do.call(mkLmerDevfun, b)
     ## Optimize the deviance function:
-    opt <- optimizeLmer(devfun,optimizer="bobyqa")
+    opt <- optimizeLmer(devfun,start=start,verbose=verbose,control=control$optCtrl) ## previously bobyqa optimizer set, but now default
     ## Package up the results:
     ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   } else { ## generalized case...
     ## Create the deviance function for optimizing over theta:
     devfun <- do.call(mkGlmerDevfun, b)
     ## Optimize over theta using a rough approximation (i.e. nAGQ = 0):
-    opt <- optimizeGlmer(devfun)
+    opt <- optimizeGlmer(devfun,start=start,verbose=verbose,control=control$optCtrl)
     ## Update the deviance function for optimizing over theta and beta:
-    devfun <- updateGlmerDevfun(devfun, b$reTrms,...)
+    devfun <- updateGlmerDevfun(devfun, b$reTrms)
     ## Optimize over theta and beta:
-    opt <- optimizeGlmer(devfun, stage=2)
+    opt <- optimizeGlmer(devfun, stage=2,start=start,verbose=verbose,control=control$optCtrl)
     ## Package up the results:
-    ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr,...)
+    ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   }
 
   rm(b)
