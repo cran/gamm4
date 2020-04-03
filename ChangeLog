@@ -12,6 +12,10 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.2-6
+
+* Removal of code branch compatible with lme<1.0 to avoid warnings.
+
 0.2-5
 
 * Fix of problem dealing with long random effect formulae. Thanks to 
