@@ -117,7 +117,7 @@ gamm4.setup<-function(formula,pterms,
 
 gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,REML=TRUE,
-      control=NULL,start=NULL,verbose=0L,...) {
+      control=NULL,start=NULL,verbose=0L,nAGQ=1L,python_cholmod=FALSE,...) {
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
@@ -135,7 +135,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
  
   mf$formula <- gp$fake.formula
   mf$REML <- mf$verbose <- mf$control <- mf$start <- mf$family <- mf$scale <-
-             mf$knots <- mf$random <- mf$... <-NULL ## mf$weights?
+             mf$knots <- mf$random <- mf$nAGQ <- mf$python_cholmod <- mf$... <-NULL ## mf$weights?
   mf$drop.unused.levels <- drop.unused.levels
   mf[[1]] <- as.name("model.frame")
   pmf <- mf
@@ -221,17 +221,59 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,REML=REML,control=control,...) else 
                    glFormula(lme4.formula,data=mf,family=family,weights=G$w,control=control,...)
 
- 
-  if (n.sr) { ## Fabian Scheipl's trick of overwriting dummy slots revised for new structure
-     tn <- names(b$reTrms$cnms) ## names associated with columns of Z (same order as Gp)
-     ind <- 1:length(tn)
-     sn <- names(G$random) ## names of smooth random components
-     for (i in 1:n.sr) { ## loop through random effect smooths
-       k <- ind[sn[i]==tn] ## which term should contain G$random[[i]] 
-       ii <- (b$reTrms$Gp[k]+1):b$reTrms$Gp[k+1]
-       b$reTrms$Zt[ii,] <- as(t(G$random[[i]]),"dgCMatrix")
-       b$reTrms$cnms[[k]] <- attr(G$random[[i]],"s.label") 
-     }
+    ## loop through random effect smooths and ingest them into Z
+  if (n.sr) {
+    tn <- names(b$reTrms$cnms) ## names associated with columns of Z (same order as Gp)
+    ind <- 1:length(tn)
+    sn <- names(G$random)
+
+    sparse_summary <- as.data.frame(summary(b$reTrms$Zt))
+    sparse_dims <- dim(b$reTrms$Zt)
+
+    for (i in 1:n.sr) {
+      k <- ind[sn[i]==tn] ## which term (variable) name represents random smooth i
+
+      # Step 1: Extract indices and values from the transposed matrix
+      indices <- which(t(G$random[[i]]) != 0, arr.ind = TRUE)
+      values <- t(G$random[[i]])[indices]
+      
+      # Step 2: Create dense summary DataFrame for the smooth submatrix
+      dense_summary <- data.frame(i = indices[, 1], j = indices[, 2], x = values)
+      
+      # Step 3: Adjust row indices according to b$reTrms$Gp[k]
+      dense_summary$i <- dense_summary$i + b$reTrms$Gp[k]
+      #ii <- (b$reTrms$Gp[k]+1):b$reTrms$Gp[k+1]
+      #message("Debug: ii ", ii)
+      #message("Debug: summary ", dense_summary$i)
+
+      
+      # Step 4: Remove rows from sparse_summary that have the same i as in dense_summary
+      filtered_sparse_summary <- sparse_summary[!(sparse_summary$i %in% dense_summary$i), ]
+      
+      # Step 5: Combine the filtered sparse summary with the dense summary
+      combined_summary <- rbind(filtered_sparse_summary, dense_summary)
+
+      # Step 6: Update sparse_summary
+      sparse_summary <- combined_summary
+      
+      # Step 7: Update labels
+      b$reTrms$cnms[[k]] <- attr(G$random[[i]],"s.label") 
+      }
+
+    # Create the new sparse matrix
+    new_sparse_mat <- sparseMatrix(
+          i = sparse_summary$i,
+          j = sparse_summary$j,
+          x = sparse_summary$x,
+          dims = c(sparse_dims[1], sparse_dims[2])
+        )
+        
+    # Assign row and column names from the original matrix
+    rownames(new_sparse_mat) <- rownames(b$reTrms$Zt)
+    colnames(new_sparse_mat) <- colnames(b$reTrms$Zt)
+
+    # Replace old Zt with the updated one
+    b$reTrms$Zt <- new_sparse_mat
   }
 
   ## now do the actual fitting...
@@ -244,18 +286,17 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     ## Create the deviance function to be optimized:
     devfun <- do.call(mkLmerDevfun, b)
     ## Optimize the deviance function:
-    opt <- optimizeLmer(devfun,start=start,verbose=verbose,control=control$optCtrl) ## previously bobyqa optimizer set, but now default
-    ## Package up the results:
+    opt <- optimizeLmer(devfun,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol)
     ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   } else { ## generalized case...
     ## Create the deviance function for optimizing over theta:
     devfun <- do.call(mkGlmerDevfun, b)
     ## Optimize over theta using a rough approximation (i.e. nAGQ = 0):
-    opt <- optimizeGlmer(devfun,start=start,verbose=verbose,control=control$optCtrl)
+    opt <- optimizeGlmer(devfun,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol,nAGQ=0)
     ## Update the deviance function for optimizing over theta and beta:
     devfun <- updateGlmerDevfun(devfun, b$reTrms)
     ## Optimize over theta and beta:
-    opt <- optimizeGlmer(devfun, stage=2,start=start,verbose=verbose,control=control$optCtrl)
+    opt <- optimizeGlmer(devfun, stage=2,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol,nAGQ=nAGQ)
     ## Package up the results:
     ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   }
@@ -287,8 +328,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     Xfp <- G$Xf
     ## Transform  parameters back to the original space....
     bf <- as.numeric(lme4::fixef(ret$mer)) ## the fixed effects
-    br <- lme4::ranef(ret$mer) ## a named list
-    if (G$nsdf) p <- bf[1:G$nsdf] else p <- array(0,0) ## fixed parametric component
+    br <- lme4::ranef(ret$mer, condVar=FALSE) ## a named list
+    if (G$nsdf) p <- bf[1:G$nsdf] else p <- array(0,0) ## fixed parametric componet
     if (G$m>0) for (i in 1:G$m) {
       fx <- G$smooth[[i]]$fixed 
       first <- G$smooth[[i]]$first.f.para; last <- G$smooth[[i]]$last.f.para
@@ -312,8 +353,29 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
          B[ind,ind] <- t(D*t(G$smooth[[i]]$trans.U))
       }
       ## and finally transform G$Xf into fitting parameterization...
-      Xfp[,ind] <- G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE]
+      Xfp[,ind] <- as.matrix(G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE])
+      #rep <- G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE]
 
+      # sparse summaries
+      #sum_rep <- summary(rep)
+      #sum_Xfp <- summary(Xfp)
+
+      # replace column indexes in rep
+      #sum_rep$j <- ind[sum_rep$j]
+
+      # remove columns from orig
+      #sum_Xfp <- subset(sum_Xfp, !(j %in% ind))
+
+      # merge
+      #sum_comb <- rbind(sum_Xfp, sum_rep)
+
+      # recreate updated sparse matrix
+      #Xfp <- sparseMatrix(
+      #  i = sum_comb$i,
+      #  j = sum_comb$j,
+      #  x = sum_comb$x,
+      #  dims = dim(Xfp)
+      #)
     }
  
     object$coefficients <- p
@@ -370,18 +432,34 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
     ## NOTE: Cholesky probably better in the following - then pivoting 
     ##       automatic when solving....
-    #R <- Matrix::chol(V,pivot=TRUE);piv <- attr(R,"pivot") ## from >1.6-2 pivot not returned!?
-    R <- mgcv::mchol(V);piv <- attr(R,"pivot") 
+
+    if (python_cholmod) {
+      library(reticulate)
+      py_require(packages="scikit-sparse>=0.4.16")
+      cholmod <- import("sksparse.cholmod")
+      R <- cholmod$cholesky(V)
+    } else {
+      R <- mgcv::mchol(V);piv <- attr(R,"pivot")
+    }
+
     G$Xf <- as(G$Xf,"dgCMatrix")
     Xfp <- as(Xfp,"dgCMatrix")
     
-    if (is.null(piv)) {
-      WX <- as(solve(t(R),Xfp),"matrix")    ## V^{-.5}Xp -- fit parameterization
-      XVX <- as(solve(t(R),G$Xf),"matrix")  ## same in original parameterization 
+    if (python_cholmod) {
+      WX <- as.matrix(R$solve_Lt(Xfp,use_LDLt_decomposition=FALSE))
+      XVX <- as.matrix(R$solve_Lt(G$Xf,use_LDLt_decomposition=FALSE))
     } else {
+
+      if (is.null(piv)) {
+      WX <- as(solve(t(R),Xfp),"matrix")    ## V^{-.5}Xp -- fit parameterization
+      XVX <- as(solve(t(R),G$Xf),"matrix")  ## same in original parameterization
+
+      } else {
       WX <- as(solve(t(R),Xfp[piv,]),"matrix")    ## V^{-.5}Xp -- fit parameterization
       XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")  ## same in original parameterization
+      }
     }
+
     qrz <- qr(XVX,LAPACK=TRUE)
     object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
 
@@ -473,17 +551,20 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 } ## end of gamm4
 
 
-
-
-
-
-
-print.gamm4.version <- function()
-{ library(help=gamm4)$info[[1]] -> version
-  version <- version[pmatch("Version",version)]
-  um <- strsplit(version," ")[[1]]
-  version <- um[nchar(um)>0][2]
-  hello <- paste("This is gamm4 ",version,"\n",sep="")
+print.gamm4.version <- function() {
+  if (requireNamespace("gamm4", quietly = TRUE)) {
+    version_info <- packageDescription("gamm4")$Version
+  } else {
+    # fallback: try to read DESCRIPTION manually (for devtools::load_all)
+    desc_path <- file.path(dirname(sys.frame(1)$ofile), "..", "DESCRIPTION")
+    if (file.exists(desc_path)) {
+      dcf <- read.dcf(desc_path)
+      version_info <- dcf[1, "Version"]
+    } else {
+      version_info <- "unknown"
+    }
+  }
+  hello <- paste("This is gamm4 ", version_info, "\n", sep = "")
   packageStartupMessage(hello)
 }
 
@@ -493,4 +574,3 @@ print.gamm4.version <- function()
 }
 
 .onUnload <- function(libpath) {}
-

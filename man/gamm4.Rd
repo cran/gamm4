@@ -33,7 +33,7 @@ To use this function effectively it helps to be quite familiar with the use of
 \usage{
 gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,
-      REML=TRUE,control=NULL,start=NULL,verbose=0L,...)
+      REML=TRUE,control=NULL,start=NULL,verbose=0L,python_choldmod=FALSE,...)
 }
 
 \arguments{ 
@@ -77,6 +77,8 @@ involving factor variables you might want to turn this off. Only do so if you kn
 \item{start}{starting value list as used by \code{\link[lme4]{lmer}} or \code{\link[lme4]{glmer}}.}
 
 \item{verbose}{passed on to fitting \code{lme4} fitting routines.}
+
+\item{python_cholmod}{Use \code{scikit-sparse} over \code{reticulate} to compute the Cholesky Decomposition of the data covariance matrix. This may lead to performance benefits for very large datasets.}
 
 \item{...}{further arguments for passing on to model setup routines.} 
 }

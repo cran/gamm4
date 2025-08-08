@@ -12,6 +12,15 @@ ISSUES:
   When there are only few random effects an alternative computation would 
   be much better.
 
+0.2-8
+* Pass optimizer arguments to lme4 / lmer
+
+* Optimize Fabian Scheipl's replacement operations with a sparse non-zero indexing approach
+
+* Disable condVar when calling ranef
+
+* Add the option to use scikit-sparse to compute the Cholesky Decomposition of the data covariance matrix.
+
 0.2-7
 
 * Matrix::chol no longer (since 1.6-3) returns the pivot sequence, rendering 

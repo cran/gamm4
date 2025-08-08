@@ -1,5 +1,5 @@
 Package: gamm4
-Version: 0.2-7
+Version: 0.2-8
 Authors@R: c(person(given = "Simon",
                       family = "Wood",
                       role = c("aut","cre"),
@@ -14,6 +14,7 @@ Description: Estimate generalized additive mixed models via a version of
 Depends: R (>= 4.4.0), methods, Matrix (>= 1.7-0), lme4 (>= 1.0), mgcv
         (>= 1.9-2)
 License: GPL (>= 2)
+Suggests: reticulate
 NeedsCompilation: no
 Packaged: 2025-04-22 09:32:25 UTC; sw283
 Author: Simon Wood [aut, cre],
