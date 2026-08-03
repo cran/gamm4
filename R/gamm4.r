@@ -1,4 +1,5 @@
-## Version of gamm using lme4 as fit engine. (c) Simon N. Wood 2009-20
+## Version of gamm using lme4 as fit engine.
+## (c) Simon N. Wood, Fabian Schiepl, Arno Schneuwly  2009-26
 ## Reparameterization trick as Wood (2004,2006). 
 ## fooling lmer using Fabian Scheipl's trick (now adapted for lme4 >1.0).
 
@@ -114,13 +115,208 @@ gamm4.setup<-function(formula,pterms,
   G
 } ## end of gamm4.setup
 
+getVb <- function(v,Zt,root.phi,scale,Xf,Xfp,Sp,B,python_cholmod=FALSE,woodbury=FALSE) {
+## Computes cov matrix of fixed and spline terms, marginalizing over random effects.
+## Inputs: 
+##   crossprod(root.phi) is the RE cov matrix, Zt is transpose of RE model matrix.
+##   v is diagonal of data sampling variance. scale is scale param. Xf and Xfp the
+##   non-RE model matrices in original and fit parameterization respectively.
+##   Sp is diag sqrt penalty matrix (fit para.), B is the repara transform. woodbury controls
+##   version - direct or Woodbury identity. Latter efficient for nrow(Z)>>ncol(Z).
+## Outputs:
+##   Vb is required cov matrix, XVX is Xf'(diag(v) + crossprod(root.phi%*%Zt))^{-1} Xf
+##   and R its Cholesky factor. Note that R can differ depending on woodbury as a
+##   result of different pivot sequence - crossproduct(R) is same.
+## Basic idea is that cov matrix in fit para is ...
+##  Vbp = (Xfp'(diag(v) + crossprod(root.phi%*%Zt)*scale)^{-1} Xfp + Sp^2/scale)^{-1}
+##  and Vb = B Vbp B' in orginal para.
+
+  if (python_cholmod) {
+      reticulate::py_require(packages="scikit-sparse~=0.5.0")
+      cholmod <- reticulate::import("sksparse.cholmod", convert=FALSE)
+      scipy_sparse <- reticulate::import("scipy.sparse", convert=FALSE)
+  }
+
+  # Ensure sparse matrices
+  Xf <- as(Xf,"dgCMatrix")
+  Xfp <- as(Xfp,"dgCMatrix")
+
+  # drop 0 variance components before proceeding
+  if (nrow(Zt)) {
+    phi <- crossprod(root.phi)
+    ind <- which(diag(phi)<.Machine$double.eps^.9*norm(phi))
+    
+    if (length(ind)) { ## drop zero variance terms
+      phi <- phi[-ind,-ind,drop=FALSE]
+      root.phi <- root.phi[,-ind,drop=FALSE]
+      Zt <- Zt[-ind,,drop=FALSE] ## better to be using Z?
+    }
+
+    if (woodbury && nrow(Zt)) {
+      if (python_cholmod) {
+        phi_py = reticulate::r_to_py(phi)$copy()
+        cho_phi_py <- try(
+          cholmod$cho_factor(phi_py, supernodal_mode="auto", lower=TRUE),
+          silent = TRUE
+        )
+        if (inherits(cho_phi_py, "try-error")) {
+          woodbury <- FALSE
+        } else {
+          perm <- as.integer(reticulate::py_to_r(cho_phi_py$get_perm()) + 1)
+          inv_perm <- perm
+          inv_perm[perm] <- 1:length(perm)
+          phi.rphi <- reticulate::py_to_r(scipy_sparse$csc_matrix(cho_phi_py$R))[,inv_perm]
+        }
+      } else {
+        phi.inv <- try(chol2inv(chol(phi)), silent = TRUE)
+        if (inherits(phi.inv,"try-error")) woodbury <- FALSE ## in which case fall back on direct
+      }  
+    }
+  }
+  
+  if (woodbury) { 
+    ## Woodbury formula version of XVX computations
+    ## if V=diag(v) and s scale and phi = crossprod(root.phi) then...
+    ## (V+ZphiZ's)^-1 = V^{-1} - V^{-1}Z(phi^{-1}/s+Z'V^{-1}Z)^{-1} Z'V^{-1} 
+    
+    vi <- 1/v
+    if (nrow(Zt)>0) {
+      if (python_cholmod) {
+        Ztilde_t <- phi.rphi %*% Zt
+        V <- Diagonal(n = nrow(Ztilde_t))/scale+Ztilde_t%*%Diagonal(n=length(vi),x=vi)%*%t(Ztilde_t)
+        V_py <- reticulate::r_to_py(V)$copy()
+        R <- cholmod$cho_factor(V_py,supernodal_mode="auto", lower=TRUE)
+
+        # Prepare permuation and inverse permutation arrays
+        perm <- as.integer(reticulate::py_to_r(R$get_perm()) + 1)
+        inv_perm <- perm
+        inv_perm[perm] <- 1:length(perm)
+
+        #XVX
+        Z1 <- (Ztilde_t%*%(Xf*vi))[perm,,drop=FALSE]
+        Z1_py = reticulate::r_to_py(Z1)$copy()
+        X1 <- R$solve(Z1_py, system="L")
+        XVX <- t(Xf)%*%(vi*Xf-vi*t(Ztilde_t)%*%
+	       (reticulate::py_to_r(scipy_sparse$csc_matrix(R$solve(X1, system="Lt")))[inv_perm,,drop=FALSE]))
+        
+        # XVXS
+        ZS1 <- (Ztilde_t%*%(Xfp*vi))[perm,,drop=FALSE]
+        ZS1_py <- reticulate::r_to_py(ZS1)$copy()
+        XS1 <- R$solve(ZS1_py,system="L")
+        XVXS <- t(Xfp)%*%(vi*Xfp-vi*t(Ztilde_t)%*%
+	(reticulate::py_to_r(scipy_sparse$csc_matrix(R$solve(XS1,system="Lt")))[inv_perm,,drop=FALSE])) + Sp^2/scale
+        
+      } else {
+        V <- phi.inv/scale+Zt%*%Diagonal(n=length(vi),x=vi)%*%t(Zt)
+        R <- mgcv::mchol(V)
+        ipiv <- piv <- attr(R,"pivot"); ipiv[piv] <- 1:length(piv)
+        XVX <- t(Xf)%*%(vi*Xf-vi*t(Zt)%*%solve(R,solve(t(R),(Zt%*%(Xf*vi))[piv,,drop=FALSE]))[ipiv,,drop=FALSE])
+        XVXS <- t(Xfp)%*%(vi*Xfp-vi*t(Zt)%*%solve(R,solve(t(R),(Zt%*%(Xfp*vi))[piv,,drop=FALSE]))[ipiv,,drop=FALSE]) + Sp^2/scale
+      }	
+    } else {
+      XVX <- t(Xf)%*%(vi*Xf); XVXS <- t(Xfp)%*%(vi*Xfp) + Sp^2/scale
+    }
+  } else { 
+      ## Direct Xf'(diag(v) + crossprod(root.phi%*%Zt))^{-1} Xf
+      V <- Diagonal(n=length(v),x=v)
+    
+    if (nrow(Zt)>0) {
+      ## data or pseudodata cov matrix, treating smooths as fixed now
+      V <- V + crossprod(root.phi%*%Zt)*scale 
+    }
+
+    if (python_cholmod) {
+      # Only system="A" applies CHOLMOD's internal permutation correctly.
+      V_py = reticulate::r_to_py(V)$copy()
+      R <- cholmod$cho_factor(V_py, supernodal_mode="auto", lower=TRUE)
+      XFP_py <- reticulate::r_to_py(Xfp)$copy()
+      XF_py <- reticulate::r_to_py(Xf)$copy()
+      XVXS <- t(Xfp) %*% reticulate::py_to_r(scipy_sparse$csc_matrix(R$solve(XFP_py, system="A"))) + Sp^2/scale
+      XVX <- t(Xf) %*% reticulate::py_to_r(scipy_sparse$csc_matrix(R$solve(XF_py, system="A")))
+
+    } else {
+      # Native R
+      R <- mgcv::mchol(V);piv <- attr(R,"pivot")
+      WX <- as(solve(t(R),Xfp[piv,,drop=FALSE]),"matrix")    ## V^{-.5}Xp -- fit parameterization
+      XVX <- as(solve(t(R),Xf[piv,,drop=FALSE]),"matrix")  ## same in original parameterization
+      XVX <- crossprod(XVX) ## X'V^{-1}X original parameterization
+      XVXS <- crossprod(WX)+Sp^2/scale ## X'V^{-1}X + S fit para
+    }
+  }
+
+  cholmod_fallback <- FALSE
+  if (python_cholmod) {
+    XVX_py <- reticulate::r_to_py(XVX)$copy()
+    R_chol <- try(cholmod$cho_factor(XVX_py, supernodal_mode="auto", lower=TRUE), silent=TRUE)
+
+    if (inherits(R_chol,"try-error")) {
+      cholmod_fallback <- TRUE
+    } else {
+
+      # Prepare permutation and inverse permutation arrays
+      perm <- as.integer(reticulate::py_to_r(R_chol$get_perm()) + 1)
+      inv_perm <- perm
+      inv_perm[perm] <- 1:length(perm)
+
+      R <- reticulate::py_to_r(scipy_sparse$csc_matrix(R_chol$R))[,inv_perm,drop=FALSE]
+    }
+  }
+
+  if (!python_cholmod || cholmod_fallback) {
+    R <- try(mgcv::mchol(XVX),silent=TRUE) ## can be semi-def so only dense and pivot works
+    if (inherits(R,"try-error")||all.equal(attr(R,"rank"),-1)==TRUE) R <- mgcv::mchol(as.matrix(XVX))
+    R[,attr(R,"pivot")] <- R; attr(R,"pivot") <- NULL # inverse permutation
+  }
+
+  cholmod_fallback <- FALSE
+
+  if (python_cholmod) {
+    XVXS_py <- reticulate::r_to_py(XVXS)$copy()
+    Rf <- try(cholmod$cho_factor(XVXS_py, supernodal_mode="auto", lower=TRUE), silent=TRUE) ## Rf'Rf = X'V^{-1}X + S in fit para
+
+    if (inherits(Rf,"try-error")) {
+      cholmod_fallback <- TRUE
+    } else {
+      # Get inverse decomposition in the permuted space
+      id_py <- reticulate::r_to_py(diag(ncol(XVXS)))$copy()
+      Ri <- reticulate::py_to_r(scipy_sparse$csc_matrix(Rf$solve(id_py,system="Lt")))
+
+      # Prepare permutation and inverse permutation arrays
+      perm <- as.integer(reticulate::py_to_r(Rf$get_perm()) + 1)
+      inv_perm <- perm
+      inv_perm[perm] <- 1:length(perm)
+
+      # Apply inverse permutation to the inverted cholesky factor to project into original space
+      Ri <- Ri[inv_perm,,drop=FALSE]
+    }
+  }
+
+  if (!python_cholmod || cholmod_fallback) {
+    Rf <- try(mgcv::mchol(XVXS),silent=TRUE) ## Rf'Rf = X'V^{-1}X + S in fit para
+    if (inherits(Rf,"try-error")||all.equal(attr(Rf,"rank"),-1)==TRUE) Rf <- mgcv::mchol(as.matrix(XVXS))
+    Ri <- backsolve(Rf,diag(ncol(Rf))); ind <- attr(Rf,"pivot")
+    ind[ind] <- 1:length(ind)
+    Ri <- Ri[ind,,drop=FALSE]
+  }
+
+  Vb <- B%*%Ri; Vb <- Vb%*%t(Vb)
+  list(Vb=Vb,XVX=XVX,R=R) 
+} ## getVb
+
 
 gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,REML=TRUE,
-      control=NULL,start=NULL,verbose=0L,...) {
+      control=NULL,start=NULL,verbose=0L,nAGQ=1L,python_cholmod=FALSE,...) {
 # Routine to fit a GAMM to some data. Fixed and smooth terms are defined in the formula, but the wiggly 
 # parts of the smooth terms are treated as random effects. The onesided formula random defines additional 
 # random terms. 
+
+  if (isTRUE(python_cholmod) && !requireNamespace("reticulate", quietly = TRUE)) {
+    stop(
+      "`python_cholmod = TRUE` requires the `reticulate` package to be installed.",
+      call. = FALSE
+    )
+  }
 
 
   if (!is.null(random)) {
@@ -135,7 +331,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
  
   mf$formula <- gp$fake.formula
   mf$REML <- mf$verbose <- mf$control <- mf$start <- mf$family <- mf$scale <-
-             mf$knots <- mf$random <- mf$... <-NULL ## mf$weights?
+             mf$knots <- mf$random <- mf$nAGQ <- mf$python_cholmod <- mf$... <-NULL ## mf$weights?
   mf$drop.unused.levels <- drop.unused.levels
   mf[[1]] <- as.name("model.frame")
   pmf <- mf
@@ -193,8 +389,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   eval(parse(text=paste("mf$",Xname,"<-G$X",sep="")))
     
   lme4.formula <- paste(yname,"~",Xname,"-1")
-  if (length(offset.name)) 
-  { lme4.formula <- paste(lme4.formula,"+",offset.name) 
+  if (length(offset.name)) {
+    lme4.formula <- paste(lme4.formula,"+",offset.name) 
   }
 
   ## Basic trick is to call (g)lFormula to set up model, with simple i.i.d. dummy random effects for the 
@@ -203,8 +399,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
   ## Add the random effect dummy variables for the smooth
   r.name <- names(G$random) 
-  if (n.sr) for (i in 1:n.sr) # adding the constructed variables to the model frame avoiding name duplication
-  { mf[[r.name[i]]] <- factor(rep(1:ncol(G$random[[i]]),length=nrow(G$random[[i]])))
+  if (n.sr) for (i in 1:n.sr) { # adding the constructed variables to the model frame avoiding name duplication
+    mf[[r.name[i]]] <- factor(rep(1:ncol(G$random[[i]]),length=nrow(G$random[[i]])))
     lme4.formula <- paste(lme4.formula,"+ (1|",r.name[i],")")
   }
   
@@ -221,41 +417,82 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
   b <- if (linear) lFormula(lme4.formula,data=mf,weights=G$w,REML=REML,control=control,...) else 
                    glFormula(lme4.formula,data=mf,family=family,weights=G$w,control=control,...)
 
- 
-  if (n.sr) { ## Fabian Scheipl's trick of overwriting dummy slots revised for new structure
-     tn <- names(b$reTrms$cnms) ## names associated with columns of Z (same order as Gp)
-     ind <- 1:length(tn)
-     sn <- names(G$random) ## names of smooth random components
-     for (i in 1:n.sr) { ## loop through random effect smooths
-       k <- ind[sn[i]==tn] ## which term should contain G$random[[i]] 
-       ii <- (b$reTrms$Gp[k]+1):b$reTrms$Gp[k+1]
-       b$reTrms$Zt[ii,] <- as(t(G$random[[i]]),"dgCMatrix")
-       b$reTrms$cnms[[k]] <- attr(G$random[[i]],"s.label") 
-     }
+    ## loop through random effect smooths and ingest them into Z
+  if (n.sr) {
+    tn <- names(b$reTrms$cnms) ## names associated with columns of Z (same order as Gp)
+    ind <- 1:length(tn)
+    sn <- names(G$random)
+
+    sparse_summary <- as.data.frame(summary(b$reTrms$Zt))
+    sparse_dims <- dim(b$reTrms$Zt)
+
+    for (i in 1:n.sr) {
+      k <- ind[sn[i]==tn] ## which term (variable) name represents random smooth i
+
+      # Step 1: Extract indices and values from the transposed matrix
+      indices <- which(t(G$random[[i]]) != 0, arr.ind = TRUE)
+      values <- t(G$random[[i]])[indices]
+      
+      # Step 2: Create dense summary DataFrame for the smooth submatrix
+      dense_summary <- data.frame(i = indices[, 1], j = indices[, 2], x = values)
+      
+      # Step 3: Adjust row indices according to b$reTrms$Gp[k]
+      dense_summary$i <- dense_summary$i + b$reTrms$Gp[k]
+      #ii <- (b$reTrms$Gp[k]+1):b$reTrms$Gp[k+1]
+      #message("Debug: ii ", ii)
+      #message("Debug: summary ", dense_summary$i)
+
+      
+      # Step 4: Remove rows from sparse_summary that have the same i as in dense_summary
+      filtered_sparse_summary <- sparse_summary[!(sparse_summary$i %in% dense_summary$i), ]
+      
+      # Step 5: Combine the filtered sparse summary with the dense summary
+      combined_summary <- rbind(filtered_sparse_summary, dense_summary)
+
+      # Step 6: Update sparse_summary
+      sparse_summary <- combined_summary
+      
+      # Step 7: Update labels
+      b$reTrms$cnms[[k]] <- attr(G$random[[i]],"s.label") 
+      }
+
+    # Create the new sparse matrix
+    new_sparse_mat <- sparseMatrix(
+          i = sparse_summary$i,
+          j = sparse_summary$j,
+          x = sparse_summary$x,
+          dims = c(sparse_dims[1], sparse_dims[2])
+        )
+        
+    # Assign row and column names from the original matrix
+    rownames(new_sparse_mat) <- rownames(b$reTrms$Zt)
+    colnames(new_sparse_mat) <- colnames(b$reTrms$Zt)
+
+    # Replace old Zt with the updated one
+    b$reTrms$Zt <- new_sparse_mat
   }
 
   ## now do the actual fitting...
   ret <- list()
-  #arg <- list(...)
-  #arg <- arg[!(names(arg) %in% names(b))]
-  #b <- c(b,arg) ## add '...' arguments for use with do.call
   b$control <- control; b$verbose=verbose; b$start=start
   if (linear) {
     ## Create the deviance function to be optimized:
     devfun <- do.call(mkLmerDevfun, b)
     ## Optimize the deviance function:
-    opt <- optimizeLmer(devfun,start=start,verbose=verbose,control=control$optCtrl) ## previously bobyqa optimizer set, but now default
-    ## Package up the results:
+    opt <- optimizeLmer(devfun,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],
+                        calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol)
     ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   } else { ## generalized case...
     ## Create the deviance function for optimizing over theta:
     devfun <- do.call(mkGlmerDevfun, b)
     ## Optimize over theta using a rough approximation (i.e. nAGQ = 0):
-    opt <- optimizeGlmer(devfun,start=start,verbose=verbose,control=control$optCtrl)
+    opt <- optimizeGlmer(devfun,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],
+                         calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol,nAGQ=0)
     ## Update the deviance function for optimizing over theta and beta:
     devfun <- updateGlmerDevfun(devfun, b$reTrms)
     ## Optimize over theta and beta:
-    opt <- optimizeGlmer(devfun, stage=2,start=start,verbose=verbose,control=control$optCtrl)
+    opt <- optimizeGlmer(devfun, stage=2,start=start,verbose=verbose,control=control$optCtrl,optimizer=control$optimizer[[1]],
+                         calc.derivs=control$calc.derivs,boundary.tol=control$boundary.tol,nAGQ=nAGQ)
     ## Package up the results:
     ret$mer <- mkMerMod(environment(devfun), opt, b$reTrms, fr = b$fr)
   }
@@ -287,8 +524,8 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     Xfp <- G$Xf
     ## Transform  parameters back to the original space....
     bf <- as.numeric(lme4::fixef(ret$mer)) ## the fixed effects
-    br <- lme4::ranef(ret$mer) ## a named list
-    if (G$nsdf) p <- bf[1:G$nsdf] else p <- array(0,0) ## fixed parametric component
+    br <- lme4::ranef(ret$mer, condVar=FALSE) ## a named list
+    if (G$nsdf) p <- bf[1:G$nsdf] else p <- array(0,0) ## fixed parametric componet
     if (G$m>0) for (i in 1:G$m) {
       fx <- G$smooth[[i]]$fixed 
       first <- G$smooth[[i]]$first.f.para; last <- G$smooth[[i]]$last.f.para
@@ -312,8 +549,7 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
          B[ind,ind] <- t(D*t(G$smooth[[i]]$trans.U))
       }
       ## and finally transform G$Xf into fitting parameterization...
-      Xfp[,ind] <- G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE]
-
+      Xfp[,ind] <- as.matrix(G$Xf[,ind,drop=FALSE]%*%B[ind,ind,drop=FALSE])
     }
  
     object$coefficients <- p
@@ -351,46 +587,9 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
       root.phi <- getME(ret$mer,"Lambdat")[ind,ind] ## and corresponding sqrt of cov matrix (phi)
     }
 
-    object$prior.weights <- G$w
-                          
-    if (linear) {
-      object$weights <- object$prior.weights 
-      V <- Diagonal(n=length(object$weights),x=scale/object$weights) 
-    } else { 
-     # mu <- getME(ret$mer,"mu")
-     # eta <- family$linkfun(mu)
-      object$weights <- ret$mer@resp$sqrtWrkWt()^2
-      ## object$prior.weights*family$mu.eta(eta)^2/family$variance(mu)
-      V <- Diagonal(x=1/object$weights)*scale
-      #V <- Diagonal(x=scale*family$variance(mu)/object$prior.weights)
-    }
-
-  
-    if (nrow(Zt)>0) V <- V + crossprod(root.phi%*%Zt)*scale ## data or pseudodata cov matrix, treating smooths as fixed now
-
-    ## NOTE: Cholesky probably better in the following - then pivoting 
-    ##       automatic when solving....
-    #R <- Matrix::chol(V,pivot=TRUE);piv <- attr(R,"pivot") ## from >1.6-2 pivot not returned!?
-    R <- mgcv::mchol(V);piv <- attr(R,"pivot") 
-    G$Xf <- as(G$Xf,"dgCMatrix")
-    Xfp <- as(Xfp,"dgCMatrix")
-    
-    if (is.null(piv)) {
-      WX <- as(solve(t(R),Xfp),"matrix")    ## V^{-.5}Xp -- fit parameterization
-      XVX <- as(solve(t(R),G$Xf),"matrix")  ## same in original parameterization 
-    } else {
-      WX <- as(solve(t(R),Xfp[piv,]),"matrix")    ## V^{-.5}Xp -- fit parameterization
-      XVX <- as(solve(t(R),G$Xf[piv,]),"matrix")  ## same in original parameterization
-    }
-    qrz <- qr(XVX,LAPACK=TRUE)
-    object$R <- qr.R(qrz);object$R[,qrz$pivot] <- object$R
-
-    XVX <- crossprod(object$R) ## X'V^{-1}X original parameterization
-
     object$sp <- sp
-    
     colx <- ncol(G$Xf)
-    Sp <- matrix(0,colx,colx) # penalty matrix - fit param
+    Sp <- matrix(0,colx,colx) # root diag penalty matrix - fit param
     first <- G$nsdf+1
     k <- 1
     if (G$m>0) for (i in 1:G$m) { # Accumulate the total penalty matrix
@@ -402,25 +601,22 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
           k <- k+1
         }														              }
       first <- last + 1 
-    }
-   
-    ## Alternative cov matrix calculation. Basic
-    ## idea is that cov matrix is computed stably in
-    ## fitting parameterization, and then transformed to
-    ## original parameterization. 
-    qrx <- qr(rbind(WX,Sp/sqrt(scale)),LAPACK=TRUE)
-    Ri <- backsolve(qr.R(qrx),diag(ncol(WX)))
-    ind <- qrx$pivot;ind[ind] <- 1:length(ind)## qrx$pivot
-    Ri <- Ri[ind,] ## unpivoted square root of cov matrix in fitting parameterization Ri Ri' = cov
-    Vb <- B%*%Ri; Vb <- Vb%*%t(Vb)
+    } ## total penalty (fit param) accumulation
+
+
+    object$prior.weights <- G$w
+    object$weights <- if (linear) object$prior.weights else ret$mer@resp$sqrtWrkWt()^2
+    v <- scale/object$weights
+        
+    a <- getVb(v,Zt,root.phi,scale,G$Xf,Xfp,Sp,B,python_cholmod,ncol(Zt)>nrow(Zt))
+    Vb <- a$Vb; XVX <- a$XVX; object$R <- a$R
 
     object$edf<-rowSums(Vb*t(XVX))
    
     object$df.residual <- length(object$y) - sum(object$edf)
 
     object$sig2 <- scale
-    if (linear) { object$method <- "lmer.REML"
-    } else { object$method <- "glmer.ML"}
+    object$method <- if (linear) "lmer.REML" else "glmer.ML"
 
     object$Vp <- as(Vb,"matrix")
   
@@ -451,12 +647,9 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
     if (G$nsdf>0) term.names<-colnames(G$X)[1:G$nsdf] else term.names<-array("",0)
     n.smooth<-length(G$smooth) 
     if (n.smooth)
-    for (i in 1:n.smooth)
-    { k<-1
-      for (j in object$smooth[[i]]$first.para:object$smooth[[i]]$last.para)
-      { term.names[j]<-paste(object$smooth[[i]]$label,".",as.character(k),sep="")
-        k<-k+1
-      }
+    for (i in 1:n.smooth) {
+      jj <- object$smooth[[i]]$first.para:object$smooth[[i]]$last.para
+      term.names[jj] <- paste(object$smooth[[i]]$label,".",as.character(jj-jj[1]+1),sep="")
     }
     names(object$coefficients) <- term.names  # note - won't work on matrices!!
     names(object$edf) <- term.names
@@ -466,24 +659,27 @@ gamm4 <- function(formula,random=NULL,family=gaussian(),data=list(),weights=NULL
 
     if (!is.null(G$Xcentre)) object$Xcentre <- G$Xcentre ## any column centering applied to smooths
 
-    ret$gam<-object
+    ret$gam <- object
     class(ret) <- c("gamm4","list")
     ret
 
 } ## end of gamm4
 
 
-
-
-
-
-
-print.gamm4.version <- function()
-{ library(help=gamm4)$info[[1]] -> version
-  version <- version[pmatch("Version",version)]
-  um <- strsplit(version," ")[[1]]
-  version <- um[nchar(um)>0][2]
-  hello <- paste("This is gamm4 ",version,"\n",sep="")
+print.gamm4.version <- function() {
+  if (requireNamespace("gamm4", quietly = TRUE)) {
+    version_info <- packageDescription("gamm4")$Version
+  } else {
+    # fallback: try to read DESCRIPTION manually (for devtools::load_all)
+    desc_path <- file.path(dirname(sys.frame(1)$ofile), "..", "DESCRIPTION")
+    if (file.exists(desc_path)) {
+      dcf <- read.dcf(desc_path)
+      version_info <- dcf[1, "Version"]
+    } else {
+      version_info <- "unknown"
+    }
+  }
+  hello <- paste("This is gamm4 ", version_info, "\n", sep = "")
   packageStartupMessage(hello)
 }
 
@@ -493,4 +689,3 @@ print.gamm4.version <- function()
 }
 
 .onUnload <- function(libpath) {}
-

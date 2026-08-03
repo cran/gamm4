@@ -7,10 +7,23 @@ ISSUES:
   This can happen, quite easily. e.g.  s(x,by=fac1) + s(x,by=fac2) means that
   the columns x:fac1 and x:fac2 are not independent.
 
-* The computation of the covariance matrix of the response/pseudodata 
-  is very resource intensive if the random effects are in only a few groups. 
-  When there are only few random effects an alternative computation would 
-  be much better.
+0.3-0
+
+* Pass optimizer arguments to lme4 / lmer
+
+* Speed up random effect design matrix creation with a sparse non-zero 
+  indexing approach
+
+* Disable condVar when calling ranef
+
+* Add the option to use scikit-sparse to compute the Cholesky decomposition 
+  of the data covariance matrix.
+
+* Use Woodbury identity to speed up cov matrix computation when random effect
+  cov matrix has more rows than columns (currently without python option).
+
+* Fix of nested random effect example in helpfile where effects were not 
+  nested! 
 
 0.2-7
 

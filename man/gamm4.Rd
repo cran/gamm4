@@ -33,7 +33,7 @@ To use this function effectively it helps to be quite familiar with the use of
 \usage{
 gamm4(formula,random=NULL,family=gaussian(),data=list(),weights=NULL,
       subset=NULL,na.action,knots=NULL,drop.unused.levels=TRUE,
-      REML=TRUE,control=NULL,start=NULL,verbose=0L,...)
+      REML=TRUE,control=NULL,start=NULL,verbose=0L,nAGQ = 1L,python_cholmod=FALSE,...)
 }
 
 \arguments{ 
@@ -77,6 +77,10 @@ involving factor variables you might want to turn this off. Only do so if you kn
 \item{start}{starting value list as used by \code{\link[lme4]{lmer}} or \code{\link[lme4]{glmer}}.}
 
 \item{verbose}{passed on to fitting \code{lme4} fitting routines.}
+
+\item{nAGQ}{passed on to \code{\link[lme4]{glmer}}.}
+
+\item{python_cholmod}{Use \code{scikit-sparse} over \code{reticulate} to compute the Cholesky Decomposition of the data covariance matrix. This may lead to performance benefits for very large datasets.}
 
 \item{...}{further arguments for passing on to model setup routines.} 
 }
@@ -136,7 +140,7 @@ and Hall/CRC Press.
 
 For more GAMM references see \code{\link[mgcv]{gamm}}
 
-\url{https://www.maths.ed.ac.uk/~swood34/}
+\url{https://webhomes.maths.ed.ac.uk/~swood34/}
 }
 \author{ Simon N. Wood \email{simon.wood@r-project.org}}
 
@@ -249,7 +253,7 @@ f2 <- function(x2) exp(2 * x2) - 3.75887
 f3 <- function (x2) 0.2 * x2^11 * (10 * (1 - x2))^6 + 10 * (10 * x2)^3 *
             (1 - x2)^10
 
-n <- 1000
+n <- 50*20 ## multiple work
 
 ## first set up a continuous-within-group effect...
 
@@ -259,8 +263,8 @@ X <- model.matrix(~g-1)
 mu <- X\%*\%rnorm(50)*.5 + (x*X)\%*\%rnorm(50)
 
 ## now add nested factors...
-a <- factor(rep(1:20,rep(50,20)))
-b <- factor(rep(rep(1:25,rep(2,25)),rep(20,50)))
+a <- factor(rep(1:20,rep(n/20,20)))
+b <- factor(rep(rep(1:25,rep(2,25)),n/50))
 Xa <- model.matrix(~a-1)
 Xb <- model.matrix(~a/b-a-1)
 mu <- mu + Xa\%*\%rnorm(20) + Xb\%*\%rnorm(500)*.5
